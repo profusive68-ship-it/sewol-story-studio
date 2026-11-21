@@ -154,7 +154,7 @@ class Worker(threading.Thread):
                         threading.Thread(target=run_daily_job, args=("schedule",), daemon=True).start()
             except Exception as e:
                 _log(f"스케줄 확인 실패: {str(e)[:150]}")
-            self._stop.wait(20)
+            self._stop.wait(12)
 
     def stop(self):
         self._stop.set()
