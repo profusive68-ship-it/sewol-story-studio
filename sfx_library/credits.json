@@ -1,0 +1,236 @@
+[
+ {
+  "tag": "문 쾅",
+  "file": "door_slam.mp3",
+  "title": "Angry Door - Wooden Entrance Open Close Slam Hard A",
+  "freesound_id": "462665",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 4.2
+ },
+ {
+  "tag": "문 닫기",
+  "file": "door_close.mp3",
+  "title": "Door_Close_01",
+  "freesound_id": "872998",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 2.0
+ },
+ {
+  "tag": "문 삐걱",
+  "file": "door_creak.mp3",
+  "title": "Creaking Old Door [Open & Close]",
+  "freesound_id": "764798",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 8.0
+ },
+ {
+  "tag": "발자국",
+  "file": "footsteps.mp3",
+  "title": "Footsteps on wooden floor",
+  "freesound_id": "-",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 12.0
+ },
+ {
+  "tag": "비",
+  "file": "rain_night.mp3",
+  "title": "steady night rain",
+  "freesound_id": "547892",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 40.0
+ },
+ {
+  "tag": "시계",
+  "file": "clock_tick.mp3",
+  "title": "Wall Clock Ticking",
+  "freesound_id": "830193",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 30.0
+ },
+ {
+  "tag": "찻잔",
+  "file": "cup_clink.mp3",
+  "title": "Ceramic cup clink",
+  "freesound_id": "-",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 1.6
+ },
+ {
+  "tag": "숟가락",
+  "file": "spoon_clink.mp3",
+  "title": "Small ceramic/metal clink",
+  "freesound_id": "-",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 1.2
+ },
+ {
+  "tag": "종이 넘김",
+  "file": "page_flip.mp3",
+  "title": "Pages Flipping.wav",
+  "freesound_id": "166193",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 3.0
+ },
+ {
+  "tag": "종이 바스락",
+  "file": "paper_pages.mp3",
+  "title": "Book - Handling and flipping through pages",
+  "freesound_id": "481077",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 12.0
+ },
+ {
+  "tag": "천 바스락",
+  "file": "cloth_rustle.mp3",
+  "title": "Foley - Cotton clothes rustling",
+  "freesound_id": "481075",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 10.0
+ },
+ {
+  "tag": "가쁜 숨",
+  "file": "breath_pant.mp3",
+  "title": "Heavy Breathing Man/Boy",
+  "freesound_id": "321669",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 8.0
+ },
+ {
+  "tag": "헉",
+  "file": "breath_gasp.mp3",
+  "title": "Surprise breath",
+  "freesound_id": "729308",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 6.0
+ },
+ {
+  "tag": "숨죽임",
+  "file": "breath_huff.mp3",
+  "title": "huff and puff",
+  "freesound_id": "542078",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 6.0
+ },
+ {
+  "tag": "한숨",
+  "file": "sigh.mp3",
+  "title": "Sigh_5_Male_Deep",
+  "freesound_id": "318090",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 5.0
+ },
+ {
+  "tag": "심장박동",
+  "file": "heartbeat.mp3",
+  "title": "SLOW HEARTBEAT",
+  "freesound_id": "249716",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 12.0
+ },
+ {
+  "tag": "병원 룸톤",
+  "file": "hospital_room.mp3",
+  "title": "Room Tone, Empty Hospital",
+  "freesound_id": "670070",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 30.0
+ },
+ {
+  "tag": "냄비 보글",
+  "file": "pot_simmer.mp3",
+  "title": "Simmer",
+  "freesound_id": "730089",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 25.0
+ },
+ {
+  "tag": "핸드폰 진동",
+  "file": "phone_vibrate.mp3",
+  "title": "Smart Phone Vibration - Short - Wood Surface",
+  "freesound_id": "708216",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 6.0
+ },
+ {
+  "tag": "바람",
+  "file": "wind_howl.mp3",
+  "title": "ATM INT Wind Howl Cold Winter",
+  "freesound_id": "546871",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 20.0
+ },
+ {
+  "tag": "바람 창",
+  "file": "wind_window.mp3",
+  "title": "Wind through window",
+  "freesound_id": "577339",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": true,
+  "seconds": 20.0
+ },
+ {
+  "tag": "침대 시트",
+  "file": "bed_rustle.mp3",
+  "title": "Bed sheets and blanket rustling",
+  "freesound_id": "856380",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 10.0
+ },
+ {
+  "tag": "장판",
+  "file": "floor_squeak.mp3",
+  "title": "linoleum floor squeaks",
+  "freesound_id": "196126",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 8.0
+ },
+ {
+  "tag": "테이프",
+  "file": "tape_peel.mp3",
+  "title": "Cellotape Peeling Perc 01",
+  "freesound_id": "642316",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 6.0
+ },
+ {
+  "tag": "가방",
+  "file": "bag_rustle.mp3",
+  "title": "plastic bag rustle",
+  "freesound_id": "-",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 6.0
+ },
+ {
+  "tag": "상자",
+  "file": "cardboard.mp3",
+  "title": "Dragging Cardboard Box",
+  "freesound_id": "864763",
+  "license": "Creative Commons 0 (CC0)",
+  "loop": false,
+  "seconds": 8.0
+ }
+]

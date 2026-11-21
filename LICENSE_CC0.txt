@@ -1,0 +1,41 @@
+세월의 사연극장 — 효과음 라이선스 (CC0)
+============================================================
+
+이 패키지의 sfx_library/ 에 들어 있는 모든 효과음은 Freesound 에서
+Creative Commons 0 (CC0, 퍼블릭 도메인) 조건으로 배포된 실음원입니다.
+CC0 는 저작자 표시 없이도 상업적 사용·수정·재배포가 가능한 가장 자유로운 라이선스입니다.
+
+[내장 효과음 목록]
+
+- 문 쾅      | door_slam.mp3        | Angry Door - Wooden Entrance Open Close Slam Hard A | Creative Commons 0 (CC0) | https://freesound.org/s/462665/
+- 문 닫기     | door_close.mp3       | Door_Close_01 | Creative Commons 0 (CC0) | https://freesound.org/s/872998/
+- 문 삐걱     | door_creak.mp3       | Creaking Old Door [Open & Close] | Creative Commons 0 (CC0) | https://freesound.org/s/764798/
+- 발자국      | footsteps.mp3        | Footsteps on wooden floor | Creative Commons 0 (CC0) | 세션에서 확보한 CC0 프리뷰
+- 비        | rain_night.mp3       | steady night rain | Creative Commons 0 (CC0) | https://freesound.org/s/547892/
+- 시계       | clock_tick.mp3       | Wall Clock Ticking | Creative Commons 0 (CC0) | https://freesound.org/s/830193/
+- 찻잔       | cup_clink.mp3        | Ceramic cup clink | Creative Commons 0 (CC0) | 세션에서 확보한 CC0 프리뷰
+- 숟가락      | spoon_clink.mp3      | Small ceramic/metal clink | Creative Commons 0 (CC0) | 세션에서 확보한 CC0 프리뷰
+- 종이 넘김    | page_flip.mp3        | Pages Flipping.wav | Creative Commons 0 (CC0) | https://freesound.org/s/166193/
+- 종이 바스락   | paper_pages.mp3      | Book - Handling and flipping through pages | Creative Commons 0 (CC0) | https://freesound.org/s/481077/
+- 천 바스락    | cloth_rustle.mp3     | Foley - Cotton clothes rustling | Creative Commons 0 (CC0) | https://freesound.org/s/481075/
+- 가쁜 숨     | breath_pant.mp3      | Heavy Breathing Man/Boy | Creative Commons 0 (CC0) | https://freesound.org/s/321669/
+- 헉        | breath_gasp.mp3      | Surprise breath | Creative Commons 0 (CC0) | https://freesound.org/s/729308/
+- 숨죽임      | breath_huff.mp3      | huff and puff | Creative Commons 0 (CC0) | https://freesound.org/s/542078/
+- 한숨       | sigh.mp3             | Sigh_5_Male_Deep | Creative Commons 0 (CC0) | https://freesound.org/s/318090/
+- 심장박동     | heartbeat.mp3        | SLOW HEARTBEAT | Creative Commons 0 (CC0) | https://freesound.org/s/249716/
+- 병원 룸톤    | hospital_room.mp3    | Room Tone, Empty Hospital | Creative Commons 0 (CC0) | https://freesound.org/s/670070/
+- 냄비 보글    | pot_simmer.mp3       | Simmer | Creative Commons 0 (CC0) | https://freesound.org/s/730089/
+- 핸드폰 진동   | phone_vibrate.mp3    | Smart Phone Vibration - Short - Wood Surface | Creative Commons 0 (CC0) | https://freesound.org/s/708216/
+- 바람       | wind_howl.mp3        | ATM INT Wind Howl Cold Winter | Creative Commons 0 (CC0) | https://freesound.org/s/546871/
+- 바람 창     | wind_window.mp3      | Wind through window | Creative Commons 0 (CC0) | https://freesound.org/s/577339/
+- 침대 시트    | bed_rustle.mp3       | Bed sheets and blanket rustling | Creative Commons 0 (CC0) | https://freesound.org/s/856380/
+- 장판       | floor_squeak.mp3     | linoleum floor squeaks | Creative Commons 0 (CC0) | https://freesound.org/s/196126/
+- 테이프      | tape_peel.mp3        | Cellotape Peeling Perc 01 | Creative Commons 0 (CC0) | https://freesound.org/s/642316/
+- 가방       | bag_rustle.mp3       | plastic bag rustle | Creative Commons 0 (CC0) | 세션에서 확보한 CC0 프리뷰
+- 상자       | cardboard.mp3        | Dragging Cardboard Box | Creative Commons 0 (CC0) | https://freesound.org/s/864763/
+
+[참고]
+· 위 파일들은 Freesound 프리뷰(MP3)를 48kHz 모노로 정리해 내장한 것입니다.
+· BGM 과 일부 생활음(새소리·종·전화벨·박수 등)은 이 패키지에서 직접 합성했으며 외부 음원을 쓰지 않았습니다.
+· 각 프로젝트 폴더에도 같은 내용의 LICENSE_CC0.txt 가 자동 생성됩니다.
+· 유튜브 업로드 시 '변형 또는 합성된 콘텐츠(AI 생성)' 항목을 체크하세요.

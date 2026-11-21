@@ -1,0 +1,405 @@
+"""아바타·카드·썸네일·입자·배지 등 이미지 그래픽."""
+from __future__ import annotations
+
+import math
+import random
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+from .paths import CACHE_DIR, FONT_DIR
+
+GOLD = (232, 190, 92)
+CREAM = (247, 240, 226)
+RED = (196, 42, 38)
+GREEN = (124, 255, 107)
+YELLOW = (255, 225, 77)
+
+_FONT_CANDIDATES = [
+    FONT_DIR / "GmarketSansBold.ttf",
+    FONT_DIR / "NanumSquareRoundEB.ttf",
+    Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
+    Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
+]
+_ROUND_CANDIDATES = [
+    FONT_DIR / "NanumSquareRoundEB.ttf",
+    FONT_DIR / "NanumSquareRoundB.ttf",
+    FONT_DIR / "GmarketSansBold.ttf",
+    Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
+]
+
+
+def font_path(round_style: bool = False) -> Path:
+    for p in (_ROUND_CANDIDATES if round_style else _FONT_CANDIDATES):
+        if p.exists():
+            return p
+    raise FileNotFoundError("한글 폰트를 찾지 못했습니다. assets/fonts 폴더를 확인하세요.")
+
+
+def font(size: int, round_style: bool = False) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(str(font_path(round_style)), max(8, int(size)))
+
+
+def fit_font(draw: ImageDraw.ImageDraw, text: str, max_width: int, start: int,
+             min_size: int = 24, round_style: bool = True) -> ImageFont.FreeTypeFont:
+    size = start
+    while size > min_size:
+        f = font(size, round_style)
+        if draw.textlength(text, font=f) <= max_width:
+            return f
+        size -= 2
+    return font(min_size, round_style)
+
+
+def text_outlined(draw: ImageDraw.ImageDraw, xy, text: str, f: ImageFont.FreeTypeFont,
+                  fill=(255, 255, 255), outline=(0, 0, 0), width: int = 4,
+                  anchor: str = "la", shadow: bool = True) -> None:
+    x, y = xy
+    if shadow:
+        draw.text((x + width * 0.6, y + width * 0.8), text, font=f, fill=(0, 0, 0, 150), anchor=anchor)
+    for dx in range(-width, width + 1, max(1, width // 2)):
+        for dy in range(-width, width + 1, max(1, width // 2)):
+            if dx or dy:
+                draw.text((x + dx, y + dy), text, font=f, fill=outline, anchor=anchor)
+    draw.text((x, y), text, font=f, fill=fill, anchor=anchor)
+
+
+# ── 아바타 ────────────────────────────────────────────────────────────────
+def make_avatar(kind: str = "female", size: int = 420) -> Image.Image:
+    """우측 하단 원형 진행자 아바타(기본 내장)."""
+    ss = 2
+    S = size * ss
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    # 배경 원 + 금테
+    for i in range(6, 0, -1):
+        r = S // 2 - i * (S // 90)
+        d.ellipse([S / 2 - r, S / 2 - r, S / 2 + r, S / 2 + r], fill=(28, 24, 20, 255))
+    d.ellipse([S * 0.035, S * 0.035, S * 0.965, S * 0.965], outline=GOLD + (235,), width=int(S * 0.018))
+    d.ellipse([S * 0.075, S * 0.075, S * 0.925, S * 0.925], fill=(44, 34, 28, 255))
+
+    # 어깨
+    shoulder = (74, 58, 46, 255) if kind == "male" else (86, 52, 58, 255)
+    d.ellipse([S * 0.16, S * 0.70, S * 0.84, S * 1.12], fill=shoulder)
+    # 목
+    d.rounded_rectangle([S * 0.42, S * 0.60, S * 0.58, S * 0.76], radius=S * 0.06, fill=(233, 197, 170, 255))
+    # 얼굴
+    face = (242, 208, 180, 255)
+    d.ellipse([S * 0.30, S * 0.24, S * 0.70, S * 0.70], fill=face)
+    # 귀
+    d.ellipse([S * 0.275, S * 0.42, S * 0.325, S * 0.52], fill=face)
+    d.ellipse([S * 0.675, S * 0.42, S * 0.725, S * 0.52], fill=face)
+
+    # 머리
+    if kind == "male":
+        d.ellipse([S * 0.285, S * 0.185, S * 0.715, S * 0.48], fill=(52, 44, 40, 255))
+        d.rectangle([S * 0.285, S * 0.33, S * 0.36, S * 0.45], fill=(52, 44, 40, 255))
+        d.rectangle([S * 0.64, S * 0.33, S * 0.715, S * 0.45], fill=(52, 44, 40, 255))
+        # 안경
+        d.ellipse([S * 0.35, S * 0.42, S * 0.455, S * 0.50], outline=(60, 48, 40, 255), width=int(S * 0.009))
+        d.ellipse([S * 0.545, S * 0.42, S * 0.65, S * 0.50], outline=(60, 48, 40, 255), width=int(S * 0.009))
+        d.line([S * 0.455, S * 0.455, S * 0.545, S * 0.455], fill=(60, 48, 40, 255), width=int(S * 0.008))
+    else:
+        d.ellipse([S * 0.265, S * 0.175, S * 0.735, S * 0.52], fill=(58, 42, 36, 255))
+        d.ellipse([S * 0.255, S * 0.30, S * 0.355, S * 0.62], fill=(58, 42, 36, 255))
+        d.ellipse([S * 0.645, S * 0.30, S * 0.745, S * 0.62], fill=(58, 42, 36, 255))
+        d.ellipse([S * 0.30, S * 0.24, S * 0.70, S * 0.34], fill=(58, 42, 36, 255))
+        # 귀걸이
+        d.ellipse([S * 0.292, S * 0.535, S * 0.315, S * 0.565], fill=GOLD + (255,))
+
+    # 눈썹·눈·코·입
+    d.line([S * 0.375, S * 0.435, S * 0.445, S * 0.428], fill=(70, 52, 42, 255), width=int(S * 0.012))
+    d.line([S * 0.555, S * 0.428, S * 0.625, S * 0.435], fill=(70, 52, 42, 255), width=int(S * 0.012))
+    for cx in (0.408, 0.592):
+        d.ellipse([S * (cx - 0.026), S * 0.462, S * (cx + 0.026), S * 0.498], fill=(250, 250, 248, 255))
+        d.ellipse([S * (cx - 0.012), S * 0.472, S * (cx + 0.012), S * 0.492], fill=(52, 40, 34, 255))
+    d.line([S * 0.50, S * 0.50, S * 0.487, S * 0.555], fill=(210, 168, 142, 255), width=int(S * 0.008))
+    d.arc([S * 0.44, S * 0.555, S * 0.56, S * 0.615], start=10, end=170, fill=(150, 78, 70, 255), width=int(S * 0.012))
+    # 볼
+    blush = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(blush)
+    bd.ellipse([S * 0.345, S * 0.545, S * 0.415, S * 0.585], fill=(226, 130, 120, 60))
+    bd.ellipse([S * 0.585, S * 0.545, S * 0.655, S * 0.585], fill=(226, 130, 120, 60))
+    img = Image.alpha_composite(img, blush.filter(ImageFilter.GaussianBlur(S * 0.006)))
+
+    # 원형으로 잘라내 테두리 밖 어깨가 삐져나오지 않게
+    mask = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(mask).ellipse([2, 2, S - 3, S - 3], fill=255)
+    out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    out.paste(img, (0, 0), mask)
+    d2 = ImageDraw.Draw(out)
+    d2.ellipse([S * 0.035, S * 0.035, S * 0.965, S * 0.965], outline=GOLD + (235,), width=int(S * 0.018))
+    return out.resize((size, size), Image.LANCZOS)
+
+
+def avatar_from_photo(path: Path, size: int = 420) -> Image.Image:
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    s = min(w, h)
+    im = im.crop(((w - s) // 2, int((h - s) * 0.25), (w + s) // 2, int((h - s) * 0.25) + s)).resize((size, size), Image.LANCZOS)
+    mask = Image.new("L", (size * 2, size * 2), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, size * 2, size * 2], fill=255)
+    mask = mask.resize((size, size), Image.LANCZOS)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(im, (0, 0), mask)
+    d = ImageDraw.Draw(out)
+    d.ellipse([2, 2, size - 3, size - 3], outline=GOLD + (240,), width=max(3, size // 90))
+    return out
+
+
+# ── 빛 입자 오버레이 ──────────────────────────────────────────────────────
+def particle_frames(width: int = 540, height: int = 960, frames: int = 96, seed: int = 7) -> Path:
+    """먼지·빛 입자가 천천히 떠오르는 8초 루프(그레이스케일 PNG 시퀀스)."""
+    w = max(240, width // 2 // 2 * 2)
+    h = max(320, height // 2 // 2 * 2)
+    key = f"p3_{w}x{h}_{frames}"
+    out = CACHE_DIR / "particles" / key
+    if (out / "done").exists():
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(seed)
+    motes = []
+    for _ in range(48):
+        motes.append({
+            "x": rng.uniform(0, w), "y": rng.uniform(0, h),
+            "r": rng.uniform(0.6, 2.2) * (w / 540), "a": rng.uniform(12, 58),
+            "vy": rng.uniform(2, 8) * (h / 960), "vx": rng.uniform(-1.5, 1.5),
+            "ph": rng.uniform(0, math.tau),
+        })
+    sprite_cache = {}
+    for i in range(frames):
+        img = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        d = ImageDraw.Draw(img)
+        for m in motes:
+            y = (m["y"] - m["vy"] * i) % (h + 40) - 20
+            x = (m["x"] + m["vx"] * i * 0.4 + math.sin(i * 0.08 + m["ph"]) * 6) % w
+            alpha = int(max(0, min(255, m["a"] * (0.55 + 0.45 * math.sin(i * 0.11 + m["ph"])))))
+            r = m["r"]
+            key_r = int(r * 4)
+            if key_r not in sprite_cache:
+                sp = Image.new("L", (key_r * 2 + 1, key_r * 2 + 1), 0)
+                sd = ImageDraw.Draw(sp)
+                for k in range(4, 0, -1):
+                    rr = key_r * k / 4
+                    sd.ellipse([key_r - rr, key_r - rr, key_r + rr, key_r + rr], fill=int(255 * (1 / k)))
+                sprite_cache[key_r] = sp.filter(ImageFilter.GaussianBlur(max(0.6, key_r * 0.18)))
+            sp = sprite_cache[key_r]
+            layer = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+            layer.paste((255, 255, 255, alpha), (int(x - key_r), int(y - key_r)), sp)
+            img = Image.alpha_composite(img, layer)
+        img.save(out / f"f{i:04d}.png")
+    (out / "done").write_text("ok")
+    return out
+
+
+# ── 카드(되감기·예고·엔딩) ────────────────────────────────────────────────
+def _card_base(w: int, h: int, warm: bool = True) -> Image.Image:
+    base = Image.new("RGB", (w, h), (18, 15, 13) if warm else (8, 8, 10))
+    arr = np.zeros((h, w, 3), dtype=np.float32)
+    top = np.array([30, 24, 20] if warm else [18, 18, 22], dtype=np.float32)
+    bot = np.array([10, 8, 7] if warm else [4, 4, 6], dtype=np.float32)
+    for y in range(h):
+        f = y / max(1, h - 1)
+        arr[y, :, :] = top * (1 - f) + bot * f
+    base = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(base)
+    # 은은한 금색 선
+    d.rectangle([int(w * 0.05), int(h * 0.06), int(w * 0.95), int(h * 0.94)],
+                outline=(120, 96, 52), width=max(2, w // 540))
+    d.rectangle([int(w * 0.058), int(h * 0.068), int(w * 0.942), int(h * 0.932)],
+                outline=(70, 56, 34), width=max(1, w // 1080))
+    return base
+
+
+def card_rewind(text: str, w: int, h: int, title: str = "") -> Image.Image:
+    img = _card_base(w, h)
+    d = ImageDraw.Draw(img)
+    lines = _wrap(text, 16)
+    f1 = font(int(h * 0.036), True)
+    if title:
+        d.text((w / 2, h * 0.38), title, font=f1, fill=GOLD, anchor="mm")
+    y = h * 0.46
+    f = fit_font(d, max(lines, key=len) if lines else text, int(w * 0.86), int(h * 0.062))
+    for line in lines:
+        d.text((w / 2, y), line, font=f, fill=CREAM, anchor="mm")
+        y += f.size * 1.35
+    d.line([w * 0.38, h * 0.64, w * 0.62, h * 0.64], fill=GOLD, width=max(2, w // 540))
+    return img
+
+
+def card_text(title: str, lines: list[str], w: int, h: int, note: str = "",
+              cta: bool = False) -> Image.Image:
+    img = _card_base(w, h, warm=True)
+    d = ImageDraw.Draw(img)
+    y = h * 0.24
+    ft = font(int(h * 0.030), True)
+    if title:
+        d.text((w / 2, y), title, font=ft, fill=GOLD, anchor="mm")
+        y += h * 0.075
+    body = [ln for ln in lines if ln.strip()]
+    size = int(h * (0.058 if not cta else 0.052))
+    f = fit_font(d, max(body, key=len) if body else "", int(w * 0.84), size)
+    for line in body:
+        d.text((w / 2, y), line, font=f, fill=CREAM, anchor="mm")
+        y += f.size * 1.45
+    if note:
+        d.text((w / 2, h * 0.855), note, font=font(int(h * 0.022), True), fill=(196, 176, 146), anchor="mm")
+    return img
+
+
+def like_badge(w: int) -> Image.Image:
+    text = "이야기가 몰입되신다면 '좋아요' 눌러주세요!"
+    f = font(int(w * 0.026), True)
+    pad = int(w * 0.022)
+    tw = int(f.getlength(text))
+    bw, bh = tw + pad * 3 + int(w * 0.036), int(f.size * 2.1)
+    img = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=bh // 2, fill=(18, 14, 12, 224),
+                        outline=GOLD + (210,), width=max(2, w // 600))
+    # 하트
+    cx, cy, r = pad + f.size * 0.42, bh / 2, f.size * 0.40
+    d.ellipse([cx - r, cy - r * 1.15, cx, cy - r * 0.15], fill=(240, 90, 98, 255))
+    d.ellipse([cx, cy - r * 1.15, cx + r, cy - r * 0.15], fill=(240, 90, 98, 255))
+    d.polygon([(cx - r * 1.0, cy - r * 0.35), (cx + r * 1.0, cy - r * 0.35), (cx, cy + r * 1.1)],
+              fill=(240, 90, 98, 255))
+    d.text((pad + int(w * 0.042), bh / 2), text, font=f, fill=(255, 248, 232), anchor="lm")
+    return img
+
+
+def end_screen_overlay(w: int, h: int) -> Image.Image:
+    """마지막 10초: 아래쪽에 어두운 그라데이션 + 구독/다음 영상 자리 표시(아주 옅게)."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    grad = np.zeros((h, w, 4), dtype=np.uint8)
+    for y in range(h):
+        f = max(0.0, (y - h * 0.35) / (h * 0.65))
+        grad[y, :, :3] = 0
+        grad[y, :, 3] = int(120 * (f ** 1.5))
+    img = Image.fromarray(grad, "RGBA")
+    d = ImageDraw.Draw(img)
+    # 구독 원형 자리(좌하) / 다음 영상 카드 자리(우하) — 아주 옅은 안내선
+    ring_r = int(min(w, h) * 0.085)
+    cx, cy = int(w * 0.16), int(h * 0.80)
+    d.ellipse([cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r], outline=(255, 255, 255, 46),
+              width=max(2, w // 500))
+    d.text((cx, cy + ring_r + int(h * 0.012)), "구독", font=font(int(h * 0.020), True),
+           fill=(255, 255, 255, 90), anchor="ma")
+    cw, ch = int(w * 0.34), int(w * 0.34 * 9 / 16)
+    d.rounded_rectangle([int(w * 0.62), int(h * 0.72), int(w * 0.62) + cw, int(h * 0.72) + ch],
+                        radius=int(h * 0.008), outline=(255, 255, 255, 42), width=max(2, w // 600))
+    d.text((int(w * 0.62) + cw // 2, int(h * 0.72) + ch + int(h * 0.010)), "다음 영상",
+           font=font(int(h * 0.018), True), fill=(255, 255, 255, 78), anchor="ma")
+    return img
+
+
+def title_overlay_small(text: str, w: int) -> Image.Image:
+    f = font(int(w * 0.024), True)
+    tw = int(f.getlength(text))
+    img = Image.new("RGBA", (tw + w // 40, int(f.size * 1.7)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.text((0, 0), text, font=f, fill=(255, 255, 255, 150))
+    return img
+
+
+# ── 썸네일 ────────────────────────────────────────────────────────────────
+def _cover(im: Image.Image, w: int, h: int) -> Image.Image:
+    im = im.convert("RGB")
+    sw, sh = im.size
+    s = max(w / sw, h / sh)
+    im = im.resize((int(sw * s + 0.5), int(sh * s + 0.5)), Image.LANCZOS)
+    x = (im.width - w) // 2
+    y = (im.height - h) // 2
+    return im.crop((x, y, x + w, y + h))
+
+
+def thumbnail_style1(image_path: Path | None, lines: list[str], w: int, h: int,
+                     badge: str = "실화 사연", channel: str = "세월의 사연극장") -> Image.Image:
+    if image_path and Path(image_path).exists():
+        img = _cover(Image.open(image_path), w, h)
+        img = img.filter(ImageFilter.GaussianBlur(0.4))
+    else:
+        img = _card_base(w, h).resize((w, h))
+    # 아래쪽 어둡게
+    ov = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+    for y in range(h):
+        f = max(0.0, (y - h * 0.30) / (h * 0.70))
+        od.line([(0, y), (w, y)], fill=(0, 0, 0, int(215 * (f ** 1.1))))
+    img = Image.alpha_composite(img.convert("RGBA"), ov)
+    d = ImageDraw.Draw(img)
+
+    # 붉은 배지
+    bf = font(int(h * 0.052), True)
+    bw = int(bf.getlength(badge) + w * 0.045)
+    bh = int(bf.size * 1.75)
+    bx, by = int(w * 0.055), int(h * 0.055)
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=int(bh * 0.22), fill=RED + (235,),
+                        outline=(255, 235, 220, 200), width=max(2, w // 500))
+    d.text((bx + bw / 2, by + bh / 2), badge, font=bf, fill=(255, 255, 255), anchor="mm")
+
+    # 두 줄 문구 — 줄 높이를 각 글자 크기에 맞춰 겹치지 않게
+    colors = [(255, 214, 64), (255, 255, 255)]
+    raw = [(line, int(h * (0.135 if i == 0 else 0.118)), colors[i % 2])
+           for i, line in enumerate(lines[:2])]
+    fitted = [(line, fit_font(d, line, int(w * 0.82), size, min_size=48, round_style=True), color)
+              for line, size, color in raw]
+    uni = min([f.size for _, f, _ in fitted] or [int(h * 0.10)])
+    fitted = [(line, font(uni, True), color) for line, _, color in fitted]
+    gap = int(uni * 0.30)
+    total_h = sum(f.size for _, f, _ in fitted) + gap * (len(fitted) - 1)
+    y = h * 0.88 - total_h + (fitted[0][1].size / 2 if fitted else 0)
+    for i, (line, f, color) in enumerate(fitted):
+        text_outlined(d, (w / 2, y), line, f, fill=color, outline=(0, 0, 0),
+                      width=max(5, int(f.size * 0.09)), anchor="mm")
+        y += f.size / 2 + gap + (fitted[i + 1][1].size / 2 if i + 1 < len(fitted) else 0)
+    # 채널 표시는 상단 배지 쪽에만(하단 문구와 겹치지 않게)
+    d.text((w - int(w * 0.05), int(h * 0.075)), channel, font=font(int(h * 0.026), True),
+           fill=(255, 255, 255, 190), anchor="rs")
+    return img.convert("RGB")
+
+
+def thumbnail_style2(lines: list[str], w: int, h: int, label: str = "오늘의 사연",
+                     channel: str = "세월의 사연극장") -> Image.Image:
+    img = Image.new("RGB", (w, h), (0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # 아주 옅은 금색 테두리
+    d.rectangle([int(w * 0.03), int(h * 0.03), int(w * 0.97), int(h * 0.97)],
+                outline=(54, 46, 32), width=max(2, w // 500))
+    d.text((w / 2, h * 0.105), label, font=font(int(h * 0.040), True), fill=(150, 132, 102), anchor="mm")
+
+    colors = [YELLOW, (255, 255, 255), GREEN, (255, 255, 255), YELLOW, GREEN, (255, 255, 255)]
+    raw = [ln.strip() for ln in lines if ln.strip()]
+    body: list[str] = []
+    for ln in raw:
+        body += _wrap(ln, 11)[:2]
+    body = body[:6]
+    avail_h = h * 0.66
+    line_h = avail_h / max(1, len(body))
+    y = h * 0.20
+    fits = []
+    for line in body:
+        size = int(min(line_h * 0.80, h * 0.145))
+        fits.append(fit_font(d, line, int(w * 0.90), size, min_size=40))
+    uni = min([f.size for f in fits] or [int(h * 0.08)])
+    for i, line in enumerate(body):
+        d.text((w / 2, y + line_h / 2), line, font=font(uni, True),
+               fill=colors[i % len(colors)], anchor="mm")
+        y += line_h
+    d.text((w / 2, h * 0.925), channel, font=font(int(h * 0.034), True), fill=(170, 160, 140), anchor="mm")
+    return img
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    import textwrap
+    return textwrap.wrap(text, width=width)[:6] or [text]
+
+
+def save(img: Image.Image, path: Path, quality: int = 92) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        img.convert("RGB").save(path, quality=quality, subsampling=1)
+    else:
+        img.save(path)
+    return path
