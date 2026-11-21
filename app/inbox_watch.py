@@ -128,15 +128,25 @@ def waiting_projects() -> list[dict]:
     return out
 
 
-def match_folder(name: str, files: list[Path], projects: list[dict]) -> str | None:
+def known_project_ids() -> set[str]:
+    """지우지 않은 모든 프로젝트 id (완성된 사연의 이미지를 다시 받을 때도 쓴다)."""
+    from .project import list_projects
+    try:
+        return {str(i.get("id")) for i in list_projects() if i.get("id")}
+    except Exception:
+        return set()
+
+
+def match_folder(name: str, files: list[Path], projects: list[dict],
+                 known_ids: set[str] | None = None) -> str | None:
     """폴더 이름 → 프로젝트 id. 폴더명이 애매하면 안에 든 파일 이름으로 맞춘다."""
     from .project import match_plan_name
     name = " ".join((name or "").split())
-    ids = {str(p.get("id")) for p in projects}
+    ids = known_ids or {str(p.get("id")) for p in projects}
     if name in ids:
         return name
     if name:
-        hit = [str(p.get("id")) for p in projects if p.get("id") and str(p["id"]).lower() in name.lower()]
+        hit = [pid for pid in ids if pid.lower() in name.lower()]
         if len(hit) == 1:
             return hit[0]
     scored: dict[str, int] = {}
@@ -254,6 +264,7 @@ def receive_once(trigger: str = "auto") -> dict:
             return result
 
         projects = waiting_projects()
+        known = known_project_ids()
         cands: list[tuple[str, str, list[Path]]] = []
         if INBOX.exists():
             for d in sorted(INBOX.iterdir()):
@@ -267,7 +278,7 @@ def receive_once(trigger: str = "auto") -> dict:
 
         events: list[dict] = []
         for folder_name, folder_path, files in cands:
-            pid = match_folder(folder_name, files, projects)
+            pid = match_folder(folder_name, files, projects, known)
             if not pid:
                 result.setdefault("unmatched", []).append(folder_name or "(기본 폴더)")
                 continue
@@ -288,6 +299,11 @@ def receive_once(trigger: str = "auto") -> dict:
 
         if events:
             msg = f"{RECEIVE_MSG} ({sum(e['count'] for e in events)}장)"
+            result["message"] = msg
+        elif result.get("unmatched"):
+            msg = ("이미지는 왔지만 넣을 사연을 찾지 못했습니다: "
+                   + ", ".join(result["unmatched"][:3])
+                   + " — 폴더 이름을 사연 번호로 맞춰 주세요.")
             result["message"] = msg
         elif pull.get("reason") == "updated":
             msg = "깃허브에서 새 파일을 받았습니다. (넣을 이미지는 없음)"

@@ -417,6 +417,9 @@ function renderDetail(p) {
   links.push(`<a href="${fileUrl(p.id, "project")}" target="_blank">project.json <span>설계도</span></a>`);
 
   const warnings = (p.warnings || []).slice(0, 4).map((w) => `<div class="warn">${esc(w)}</div>`).join("");
+  const recv = (p.receive_log || []).slice(-1)[0];
+  const recvBox = recv ? `<div class="inbox-event"><b>${esc(recv.message || "🎉 케빈이 올린 이미지 자동 수신 완료!")}</b>
+      <div>${esc((recv.files || []).slice(0, 8).join(", "))}${(recv.files || []).length > 8 ? " 외" : ""} · ${esc(recv.time || "")}</div></div>` : "";
   const need = p.missing_images || [];
   const pack = p.upload_pack || {};
   const titles = pack.titles || p.titles || [p.title];
@@ -453,6 +456,7 @@ function renderDetail(p) {
       ${p.duration ? `<span class="tag">${mmss(p.duration)}</span>` : ""}
     </div>
     ${warnings}
+    ${recvBox}
     ${done ? `<video controls preload="metadata" src="${fileUrl(p.id, "video")}" style="width:100%;border-radius:14px;background:#000;margin-bottom:12px"></video>` : ""}
     ${planFiles.length ? `<div class="requestbox">
       <div class="row">

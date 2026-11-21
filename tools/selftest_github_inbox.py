@@ -248,6 +248,24 @@ def main() -> int:
           str(res3)[:300])
     check("s03.png 복사", (project_dir(pid) / "images" / "s03.png").exists())
 
+    # 완성된 사연도 폴더 이름이 정확하면 새 이미지를 다시 받는다
+    from app.project import set_status  # noqa: E402
+    p3 = load(pid)
+    set_status(p3, "done", 100, "완성")
+    (inbox_dir / "s05.png").write_bytes(png + b"5")
+    res_done = ib.receive_once("test")
+    check("완성된 사연도 폴더명으로 재수신", any(e["project_id"] == pid for e in res_done.get("received", [])),
+          str(res_done)[:200])
+    check("완성 상태는 덮어쓰지 않음", load(pid).get("status", {}).get("stage") == "done")
+    check("재수신도 기록은 남김", bool(load(pid).get("receive_log")))
+
+    orphan = app_root / "assets_inbox" / "unknown-folder"
+    orphan.mkdir(parents=True, exist_ok=True)
+    (orphan / "s99.png").write_bytes(png + b"9")
+    res_orphan = ib.receive_once("test")
+    check("매칭 안 되는 폴더는 안내 문구", "찾지 못했습니다" in res_orphan.get("message", ""),
+          res_orphan.get("message", ""))
+
     print("== 5. git pull 실패는 경고만 남기고 서버를 죽이지 않는다 ==")
     ib.git_pull = lambda timeout=120: {"ok": False, "reason": "pull_failed",
                                        "message": "fatal: Not possible to fast-forward, aborting."}
@@ -280,6 +298,7 @@ def main() -> int:
 
     import importlib
     importlib.reload(ib)          # 위에서 monkeypatch 한 is_git_repo/git_pull 되돌리기
+    importlib.reload(ib)          # (settings/github 모듈 상태도 함께 새로 읽는다)
     res5 = ib.receive_once("test")
     check("실제 git pull 성공", res5.get("ok") is True and res5.get("git", {}).get("reason") == "updated",
           str(res5.get("git"))[:300])
