@@ -24,6 +24,7 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 RECEIVE_MSG = "🎉 케빈이 올린 이미지 자동 수신 완료!"
 
 _RUN_LOCK = threading.Lock()
+_GIT_LOCK = threading.Lock()
 
 
 # ── 로그·상태 ─────────────────────────────────────────────────────────────
@@ -84,11 +85,12 @@ def git_pull(timeout: int = 120) -> dict[str, Any]:
     if not is_git_repo():
         return {"ok": False, "reason": "not_git",
                 "message": "이 폴더는 깃허브 저장소가 아닙니다. README 의 [설치]를 참고해 git clone 으로 받아 주세요."}
-    try:
-        r = subprocess.run(["git", "-C", str(BASE), "pull", "--ff-only"],
-                           capture_output=True, text=True, timeout=timeout)
-    except Exception as e:
-        return {"ok": False, "reason": "error", "message": f"git pull 실행 실패: {str(e)[:200]}"}
+    with _GIT_LOCK:              # 20초 워커·[최신 버전 받기] 버튼이 동시에 pull 하지 않게
+        try:
+            r = subprocess.run(["git", "-C", str(BASE), "pull", "--ff-only"],
+                               capture_output=True, text=True, timeout=timeout)
+        except Exception as e:
+            return {"ok": False, "reason": "error", "message": f"git pull 실행 실패: {str(e)[:200]}"}
     out = ((r.stdout or "") + (r.stderr or "")).strip()
     if r.returncode != 0:
         return {"ok": False, "reason": "pull_failed", "message": out[-600:] or f"git pull 종료 코드 {r.returncode}"}

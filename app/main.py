@@ -943,14 +943,12 @@ def inbox_import(body: InboxIn):
 @app.post("/api/update/pull")
 def update_pull():
     def work(progress):
-        import subprocess as _sp
-        root = str(BASE)
-        if not (Path(root) / ".git").exists():
+        if not (BASE / ".git").exists():
             return {"ok": False, "message": "이 폴더는 깃허브 저장소가 아닙니다. README 의 [설치]를 참고해 git clone 으로 다시 받아 주세요."}
         progress(20, "깃허브에서 최신 버전 확인 중…")
-        r = _sp.run(["git", "-C", root, "pull", "--ff-only"], capture_output=True, text=True, timeout=120)
-        msg = (r.stdout or "") + (r.stderr or "")
-        return {"ok": r.returncode == 0, "message": msg.strip()[-1200:]}
+        res = ib.git_pull()          # 자동 수신 워커와 같은 잠금을 쓴다 (동시 pull 방지)
+        return {"ok": bool(res.get("ok")), "message": (res.get("message") or "")[-1200:],
+                "reason": res.get("reason")}
 
     return {"job": start_job("update", work)}
 
