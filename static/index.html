@@ -15,7 +15,13 @@
       <p>맥북 원클릭 자동화 스튜디오 · 대본 → 성우 → 이미지 → 영상 → 썸네일</p>
     </div>
   </div>
-  <div class="chips" id="health"><span class="chip">서버 확인 중…</span></div>
+  <div class="top-right">
+    <div class="chips" id="health"><span class="chip">서버 확인 중…</span></div>
+    <div class="auto-inbox">
+      <button class="btn small recv-on" id="btnAutoInbox" title="깃허브 assets_inbox 폴더를 20초마다 확인해 새 이미지를 자동으로 받습니다">🔄 자동 이미지 수신 <b id="autoInboxState">ON</b></button>
+      <span class="hint small" id="autoInboxMsg">확인 대기 중…</span>
+    </div>
+  </div>
 </header>
 
 <main class="layout">
@@ -36,6 +42,28 @@
       <details class="more">
         <summary>키 발급 방법 보기</summary>
         <p>Google AI Studio(aistudio.google.com) → <b>Get API key</b> → 새 키 만들기 → 복사해서 위에 붙여넣기. 무료 한도로도 하루 몇 편은 충분합니다.</p>
+      </details>
+    </section>
+
+    <section class="card" id="ghCard">
+      <div class="card-head">
+        <h2><span class="num">🔗</span> 케빈에게 이미지 요청 (깃허브)</h2>
+        <span class="badge" id="ghBadge">토큰 없음</span>
+      </div>
+      <p class="hint">사연을 열고 <b>[📤 케빈에게 이미지 요청하기]</b>를 누르면 이 저장소에 이미지 요청 이슈가 올라갑니다.
+        <b>요청 누르시면 케빈이 5분 이내에 자동 감지해서 이미지를 깃허브로 보내드립니다 (따로 톡 안 주셔도 됩니다!)</b></p>
+      <div class="row">
+        <input type="password" id="ghToken" placeholder="ghp_... (선택 · repo 권한 토큰을 넣으면 버튼 한 번에 이슈 자동 등록)" autocomplete="off">
+        <button class="btn" id="btnGhSave">저장</button>
+        <button class="btn ghost small" id="btnGhTest">연결 테스트</button>
+      </div>
+      <p class="hint small" id="ghMsg">저장소 profusive68-ship-it/sewol-story-studio · 라벨 image-request</p>
+      <details class="more">
+        <summary>토큰 없이도 됩니다 (1클릭 등록 화면)</summary>
+        <p>토큰이 없으면 깃허브 <b>새 이슈 작성 화면</b>이 제목·본문이 채워진 채로 열립니다. [Create]만 누르면 등록됩니다.
+          요청서 전문은 클립보드에도 함께 복사됩니다. 토큰을 넣으면 이 화면조차 필요 없이 버튼 한 번으로 이슈가 등록되고 주소가 표시됩니다.</p>
+        <p>토큰은 GitHub → Settings → Developer settings → Personal access tokens 에서 <b>Issues: Read and write</b> (classic 은 repo) 권한으로 만들 수 있습니다.
+          토큰은 이 맥북 안 <code>config.json</code> 에만 저장되고(권한 600), 화면에는 가려서 표시됩니다.</p>
       </details>
     </section>
 
@@ -327,12 +355,18 @@
     </section>
 
     <section class="card" id="updateCard">
-      <div class="card-head"><h2><span class="num">🔄</span> 최신 버전·이미지 받기</h2></div>
+      <div class="card-head"><h2><span class="num">🔄</span> 최신 버전·이미지 받기</h2>
+        <span class="badge" id="inboxAutoBadge">자동 수신</span></div>
       <p class="hint">깃허브 저장소에서 새 버전과 이미지 묶음을 받아옵니다. 내 설정·프로젝트는 덮어쓰지 않습니다.</p>
       <div class="row">
         <button class="btn small" id="btnUpdate">🔄 최신 버전 받아오기</button>
+        <button class="btn ghost small" id="btnInboxCheck">지금 이미지 확인</button>
         <span class="hint small" id="updateMsg">깃허브 연결 확인 중…</span>
       </div>
+      <label class="switch"><input type="checkbox" id="autoAssemble"><span></span>
+        <div><b>이미지가 다 모이면 자동으로 영상 조립</b><small>받은 이미지로 남은 장수가 0이 되면 바로 조립을 시작합니다 (렌더링이 오래 걸립니다)</small></div></label>
+      <p class="hint small" id="autoInboxDetail">20초마다 깃허브를 확인합니다.</p>
+      <div id="inboxEvents" class="inbox-list"></div>
       <div id="inboxList" class="inbox-list"></div>
     </section>
   </div>

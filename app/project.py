@@ -532,13 +532,19 @@ def write_image_request(project: dict) -> Path:
     lines.append("=" * 64)
     lines.append(f"『세월의 사연극장』 이미지 요청서 — {project['title']}")
     lines.append(f"프로젝트: {project['id']}   형식: {fmt['label']} ({fmt['aspect']}, {fmt['width']}×{fmt['height']})")
+    lines.append(f"project_id: {project['id']}")
+    lines.append(f"target_inbox: assets_inbox/{project['id']}")
     lines.append("=" * 64)
     lines.append("")
     lines.append("[사용 방법]")
     lines.append("1) 아래 파일 이름 그대로 이미지를 받아 이 폴더의 images/ 안에 넣습니다.")
     lines.append("2) 웹 화면에서 [영상 조립 시작]을 누르면 대사 길이에 맞춰 초 단위로 자동 조립됩니다.")
     lines.append("3) 파일 이름이 다르면 인식되지 않습니다. (예: s01.png, s02.png …)")
-    lines.append("4) 케빈에게 요청할 때는 이 파일 내용을 그대로 보내면 됩니다.")
+    lines.append("4) 웹 화면의 [📤 케빈에게 이미지 요청하기]를 누르면 이 요청서가 그대로 깃허브 이미지 요청으로 올라갑니다.")
+    lines.append("")
+    lines.append("[케빈 업로드 위치]")
+    lines.append(f"· 깃허브 저장소의 assets_inbox/{project['id']}/ 폴더에 위 [파일명] 그대로 올려 주세요.")
+    lines.append("· 맥북 대시보드가 20초마다 자동으로 확인해 images/ 로 복사합니다. 파일 이름을 바꾸면 인식되지 않습니다.")
     lines.append("")
     lines.append("[배치 원칙] 초반 3분에 4~5장을 집중 배치하고, 본론은 5~7분마다 1장씩 천천히 흐릅니다.")
     lines.append("            모든 이미지에 느린 줌(Ken Burns)과 먼지·빛 입자가 자동으로 들어갑니다.")
@@ -567,6 +573,24 @@ def write_image_request(project: dict) -> Path:
     path = pdir / "이미지_요청서.txt"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def match_plan_name(name: str, plan_files) -> str | None:
+    """받은 이미지 파일 이름을 요청서 파일명에 맞춘다. (s1.png → s01.png 허용)"""
+    files = {str(f) for f in (plan_files or []) if f}
+    if not files or not name:
+        return None
+    for f in files:
+        if f.lower() == name.lower():
+            return f
+    base = Path(name).stem.lower()
+    m = re.match(r"^s(\d+)$", base)
+    if m:
+        want = f"s{int(m.group(1)):02d}.png"
+        for f in files:
+            if f.lower() == want:
+                return f
+    return None
 
 
 def _mmss(sec: float) -> str:

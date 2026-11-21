@@ -111,11 +111,14 @@ async function init() {
   await loadMeta();
   await loadHealth();
   await loadYtStatus();
+  await loadGhStatus();
   await loadProjects();
   await loadStrategy();
   await loadRemote();
   await loadSchedule();
   await loadInbox();
+  await loadAutoInbox();
+  setInterval(() => loadAutoInbox(), 10000);
 }
 
 function renderGenres() {
@@ -326,7 +329,7 @@ function watchJob(jobId, opts = {}) {
       else if (j.result?.video) showCompileResult(j.result);
       await loadProjects();
       opts.onDone && opts.onDone(j);
-      toast("완성되었습니다.");
+      if (!opts.quiet) toast("완성되었습니다.");
     } else if (j.status === "error") {
       clearInterval(POLL); POLL = null;
       $("#jobBadge").textContent = "오류";
@@ -409,7 +412,6 @@ function renderDetail(p) {
   if (p.outputs?.video) links.push(`<a href="${fileUrl(p.id, "video")}" target="_blank">영상 보기 <span>영상 파일</span></a>`);
   if (p.outputs?.thumb_style1) links.push(`<a href="${fileUrl(p.id, "thumb1")}" target="_blank">썸네일 ① 인물 드라마형 <span>이미지 파일</span></a>`);
   if (p.outputs?.thumb_style2) links.push(`<a href="${fileUrl(p.id, "thumb2")}" target="_blank">썸네일 ② 대문짝 텍스트형 <span>이미지 파일</span></a>`);
-  links.push(`<a href="${fileUrl(p.id, "request")}" target="_blank">이미지 요청서 <span>문서</span></a>`);
   links.push(`<a href="${fileUrl(p.id, "copy")}" target="_blank">업로드 카피 <span>문서</span></a>`);
   links.push(`<a href="${fileUrl(p.id, "srt")}" target="_blank">자막 <span>srt</span></a>`);
   links.push(`<a href="${fileUrl(p.id, "project")}" target="_blank">project.json <span>설계도</span></a>`);
@@ -452,6 +454,13 @@ function renderDetail(p) {
     </div>
     ${warnings}
     ${done ? `<video controls preload="metadata" src="${fileUrl(p.id, "video")}" style="width:100%;border-radius:14px;background:#000;margin-bottom:12px"></video>` : ""}
+    ${planFiles.length ? `<div class="requestbox">
+      <div class="row">
+        <button class="btn primary small" id="btnGhRequest">📤 케빈에게 이미지 요청하기</button>
+        <a class="btn ghost small" href="${fileUrl(p.id, "request")}" target="_blank">요청서 보기</a>
+      </div>
+      <p class="hint small">요청 누르시면 케빈이 5분 이내에 자동 감지해서 이미지를 깃허브로 보내드립니다 (따로 톡 안 주셔도 됩니다!)</p>
+    </div>` : ""}
     <div class="result-links">${links.join("")}</div>
     ${(p.outputs?.video) ? `<div class="ytbox">
       <label class="label">유튜브에 올리기</label>
@@ -491,6 +500,7 @@ function renderDetail(p) {
     copyText(el ? el.textContent : "");
   }));
   $("#btnProjYt")?.addEventListener("click", () => uploadToYoutube(p.id));
+  $("#btnGhRequest")?.addEventListener("click", () => requestKevinsImages(p.id));
   $("#btnShorts")?.addEventListener("click", () => makeShorts(p.id));
   $("#btnOpenFolder")?.addEventListener("click", async () => {
     try { await api(`/api/projects/${p.id}/open`, { method: "POST" }); }
@@ -703,6 +713,162 @@ async function makeShorts(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+// ── 케빈에게 이미지 요청 (깃허브) ────────────────────────────────
+let GH = { repo: "", has_token: false };
+
+async function loadGhStatus() {
+  try {
+    const d = await api("/api/github/status");
+    GH = d;
+    const badge = $("#ghBadge");
+    badge.textContent = d.has_token ? "토큰 저장됨 · 자동 등록" : "토큰 없음 · 1클릭 등록";
+    badge.className = "badge " + (d.has_token ? "on" : "");
+    $("#ghMsg").textContent = `저장소 ${d.repo} · 라벨 ${d.label}`
+      + (d.token_masked ? ` · 저장된 토큰 ${d.token_masked}` : " · 토큰은 선택입니다");
+  } catch (e) { /* 무시 */ }
+}
+
+async function saveGhToken() {
+  const v = $("#ghToken").value.trim();
+  if (!v) return toast("토큰을 입력해 주세요. (토큰 없이도 1클릭 등록으로 보낼 수 있습니다)", true);
+  try {
+    await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ github_token: v }),
+    });
+    $("#ghToken").value = "";
+    toast("깃허브 토큰을 저장했습니다. 이제 버튼 한 번에 이슈가 등록됩니다.");
+    await loadGhStatus();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function testGhToken() {
+  $("#btnGhTest").disabled = true;
+  try {
+    const r = await api("/api/github/test", { method: "POST" });
+    if (r.ok) toast(`${r.login || "연결"} · ${r.repo} 확인 (${r.can_push ? "이슈 등록 가능" : "권한 부족"})`);
+    else toast(r.error || "연결하지 못했습니다.", true);
+  } catch (e) { toast(e.message, true); }
+  finally { $("#btnGhTest").disabled = false; }
+}
+
+async function requestKevinsImages(id) {
+  // 팝업 차단을 피하려고 클릭 시점에 빈 창을 먼저 열어 둔다
+  let win = null;
+  try { win = window.open("", "_blank"); } catch (e) { win = null; }
+  const btn = $("#btnGhRequest");
+  if (btn) { btn.disabled = true; btn.textContent = "요청 보내는 중…"; }
+  const open = (url) => {
+    if (win && !win.closed) win.location.href = url;
+    else window.open(url, "_blank");
+  };
+  try {
+    const r = await api(`/api/projects/${id}/github-request`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "auto" }),
+    });
+    open(r.url);
+    if (r.fallback_error) toast("토큰 등록 실패 — 1클릭 등록 화면으로 넘어갑니다: " + r.fallback_error, true);
+    if (r.mode === "api") {
+      toast(`깃허브 이미지 요청 이슈 #${r.number} 등록 완료 · 케빈이 5분 이내에 자동 감지해서 이미지를 보내드립니다.`);
+      return;
+    }
+    const copied = r.copy_body ? await copyText(r.body, true) : false;
+    if (r.prefill === "none") {
+      toast(copied
+        ? "깃허브 새 이슈 화면을 열었습니다. 본문 칸에서 ⌘V로 붙여넣고 [Create issue]를 누르세요."
+        : "깃허브 새 이슈 화면을 열었습니다. [요청서 보기]의 내용을 붙여넣고 [Create issue]를 누르세요.", true);
+    } else {
+      toast("깃허브 새 이슈 화면이 열렸습니다. [Create issue]만 누르면 케빈에게 전달됩니다."
+        + (copied ? " (요청서 전문은 클립보드에 복사해 두었습니다)" : ""));
+    }
+  } catch (e) {
+    if (win && !win.closed) win.close();
+    toast(e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "📤 케빈에게 이미지 요청하기"; }
+  }
+}
+
+// ── 자동 이미지 수신 ────────────────────────────────────────────────
+let INBOX_SEQ = null;
+
+async function loadAutoInbox() {
+  try {
+    const d = await api("/api/inbox/auto");
+    const on = !!d.enabled;
+    const btn = $("#btnAutoInbox");
+    btn.classList.toggle("recv-on", on);
+    btn.classList.toggle("recv-off", !on);
+    $("#autoInboxState").textContent = on ? "ON" : "OFF";
+    const last = d.last_check ? d.last_check.slice(11, 19) : "—";
+    $("#autoInboxMsg").textContent = on
+      ? `${d.is_git ? "깃허브 확인 중" : "깃허브 저장소 아님"} · 마지막 ${last}`
+      : "자동 수신 꺼짐";
+    $("#autoInboxDetail").textContent = d.is_git
+      ? `20초마다 확인합니다 · 마지막 확인 ${d.last_check || "아직"} · ${d.last_message || "대기 중"}`
+      : "이 폴더는 git 저장소가 아닙니다. README 의 [설치]처럼 git clone 으로 받으면 20초 자동 수신이 켜집니다.";
+    $("#autoAssemble").checked = !!d.auto_assemble;
+    const badge = $("#inboxAutoBadge");
+    badge.textContent = on ? "자동 수신 ON" : "자동 수신 OFF";
+    badge.className = "badge " + (on ? "on" : "");
+    renderInboxEvents(d.events || []);
+    if (INBOX_SEQ !== null && d.seq > INBOX_SEQ && (d.events || []).length) {
+      const e = d.events[d.events.length - 1];
+      toast(`🎉 케빈이 올린 이미지 자동 수신 완료! (${e.count}장 · 남은 ${e.missing}장)`);
+      await loadProjects();
+      if (CURRENT && CURRENT.id === e.project_id) await openProject(e.project_id);
+    }
+    INBOX_SEQ = d.seq;
+  } catch (e) { /* 무시 */ }
+}
+
+function renderInboxEvents(events) {
+  const box = $("#inboxEvents");
+  if (!box) return;
+  if (!events.length) { box.innerHTML = ""; return; }
+  box.innerHTML = events.slice().reverse().slice(0, 6).map((e) => `
+    <div class="inbox-event"><b>${esc(e.message || "이미지 도착")}</b>
+      <div>${esc(e.project_id)} · ${esc(e.folder || "기본 폴더")} · ${e.count}장 · 남은 ${e.missing}장 · ${esc(e.time)}</div>
+    </div>`).join("");
+}
+
+async function toggleAutoInbox() {
+  const turnOn = $("#autoInboxState").textContent !== "ON";
+  try {
+    await api("/api/inbox/auto", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: turnOn }),
+    });
+    toast(turnOn ? "자동 이미지 수신을 켰습니다. 20초마다 확인합니다." : "자동 이미지 수신을 껐습니다.");
+    await loadAutoInbox();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function saveAutoAssemble() {
+  try {
+    await api("/api/inbox/auto", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_assemble: $("#autoAssemble").checked }),
+    });
+    toast($("#autoAssemble").checked ? "이미지가 다 모이면 자동으로 조립합니다." : "자동 조립을 껐습니다.");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function checkInboxNow() {
+  try {
+    const { job } = await api("/api/inbox/check", { method: "POST" });
+    watchJob(job, { quiet: true, onDone: async (j) => {
+      const r = j.result || {};
+      $("#updateMsg").textContent = r.message || "확인 완료";
+      await loadAutoInbox();
+      await loadInbox();
+      await loadProjects();
+      if (CURRENT) await openProject(CURRENT.id);
+    }});
+  } catch (e) { toast(e.message, true); }
+}
+
 // ── 업데이트 · 이미지 인박스 ─────────────────────────────────────────────
 async function updatePull() {
   $("#updateMsg").textContent = "최신 버전 확인 중…";
@@ -823,16 +989,29 @@ async function uploadToYoutube(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-async function copyText(text) {
-  if (!text) return toast("복사할 내용이 없습니다.", true);
+async function copyText(text, silent = false) {
+  if (!text) {
+    if (!silent) toast("복사할 내용이 없습니다.", true);
+    return false;
+  }
   try {
     await navigator.clipboard.writeText(text);
-    toast("복사했습니다. 유튜브에 붙여넣으세요.");
+    if (!silent) toast("복사했습니다. 유튜브에 붙여넣으세요.");
+    return true;
   } catch (e) {
-    const ta = document.createElement("textarea");
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    document.execCommand("copy"); ta.remove();
-    toast("복사했습니다.");
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (!silent) toast(ok ? "복사했습니다." : "복사하지 못했습니다. 요청서에서 직접 복사해 주세요.", !ok);
+      return ok;
+    } catch (e2) {
+      if (!silent) toast("복사하지 못했습니다. 요청서에서 직접 복사해 주세요.", true);
+      return false;
+    }
   }
 }
 
@@ -913,6 +1092,11 @@ function bind() {
   $("#btnSchedNow").addEventListener("click", runScheduleNow);
   $("#btnComments").addEventListener("click", loadComments);
   $("#btnUpdate").addEventListener("click", updatePull);
+  $("#btnInboxCheck").addEventListener("click", checkInboxNow);
+  $("#btnAutoInbox").addEventListener("click", toggleAutoInbox);
+  $("#autoAssemble").addEventListener("change", saveAutoAssemble);
+  $("#btnGhSave").addEventListener("click", saveGhToken);
+  $("#btnGhTest").addEventListener("click", testGhToken);
   $("#btnYtSecret").addEventListener("click", uploadSecret);
   $("#btnYtConnect").addEventListener("click", connectYoutube);
   $("#btnYtDisconnect").addEventListener("click", disconnectYoutube);

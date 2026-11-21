@@ -30,14 +30,16 @@ from .project import (CTA_SHORT, CTA_TEXT, LIKE_VOICE_SHORT, LIKE_VOICE_TEXT, bu
                       write_image_request, write_upload_copy)
 from .pronunciation import ensure_pron_file
 from .render import detect_encoder, encoder_info, render_thumbnails, render_video
-from .settings import (AVATAR_KINDS, FORMAT_PRESETS, GENRES, SUBTITLE_SIZES, VOICE_MODES,
-                       load_config, public_config, save_config)
+from .settings import (AVATAR_KINDS, DEFAULT_GITHUB_REPO, FORMAT_PRESETS, GENRES, SUBTITLE_SIZES,
+                       VOICE_MODES, load_config, public_config, save_config)
 from .tts import synthesize_sync, voice_report
 from . import youtube_upload as yt
 from . import strategy as st
 from . import comments as cm
 from . import netinfo as net
 from . import scheduler as sch
+from . import github_issue as gh
+from . import inbox_watch as ib
 from .shorts import extract_shorts
 
 ensure_dirs()
@@ -50,6 +52,10 @@ app = FastAPI(title="세월의 사연극장 스튜디오", version=__version__)
 def _startup():
     try:
         sch.start_worker()
+    except Exception:
+        pass
+    try:
+        ib.start_worker()
     except Exception:
         pass
 if STATIC_DIR.exists():
@@ -194,13 +200,18 @@ class ConfigIn(BaseModel):
     encoder: str | None = None
     force_scale: float | None = None
     keep_segments: bool | None = None
+    github_token: str | None = None
+    github_repo: str | None = None
 
 
 @app.post("/api/config")
 def set_config(body: ConfigIn):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "gemini_api_key" in patch:
-        patch["gemini_api_key"] = patch["gemini_api_key"].strip()
+    for k in ("gemini_api_key", "github_token"):
+        if k in patch:
+            patch[k] = (patch[k] or "").strip()
+    if "github_repo" in patch:
+        patch["github_repo"] = (patch["github_repo"] or "").strip() or DEFAULT_GITHUB_REPO
     save_config(patch)
     return public_config()
 
@@ -421,15 +432,8 @@ async def upload_images(pid: str, files: list[UploadFile] = File(...)):
 
 
 def _match_name(name: str, plan_files: set[str]) -> str | None:
-    base = Path(name).stem.lower()
-    for f in plan_files:
-        if f.lower() == name.lower():
-            return f
-        # s1.png → s01.png 허용
-        m = re.match(r"^s(\d+)$", base)
-        if m and f.lower() == f"s{int(m.group(1)):02d}.png":
-            return f
-    return None
+    from .project import match_plan_name
+    return match_plan_name(name, plan_files)
 
 
 @app.delete("/api/projects/{pid}/images/{name}")
@@ -794,6 +798,107 @@ def schedule_run_now():
 
 # ── 깃허브 업데이트 · 이미지 인박스 ──────────────────────────────────────
 INBOX = BASE / "assets_inbox"
+
+
+@app.get("/api/github/status")
+def github_status():
+    cfg = load_config()
+    tok = gh.token()
+    return {"repo": gh.repo_name(), "has_token": bool(tok),
+            "token_masked": public_config().get("github_token_masked", ""),
+            "label": gh.LABEL, "configured_repo": cfg.get("github_repo") or DEFAULT_GITHUB_REPO}
+
+
+@app.post("/api/github/test")
+def github_test():
+    try:
+        info = gh.check_token()
+        return {"ok": True, **info, "message": f"{info.get('login') or ''} 로 연결됐습니다."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+class GhRequestIn(BaseModel):
+    mode: str = "auto"       # auto | url  (url = 토큰을 쓰지 않고 등록 화면을 연다)
+
+
+@app.post("/api/projects/{pid}/github-request")
+def github_request(pid: str, body: GhRequestIn | None = None):
+    """이미지 요청서를 깃허브 이슈로 보낸다 (토큰이 없으면 1클릭 등록 화면)."""
+    _check_pid(pid)
+    p = load(pid)
+    req_path = project_dir(pid) / "이미지_요청서.txt"
+    if not req_path.exists():
+        write_image_request(p)
+    text = req_path.read_text(encoding="utf-8") if req_path.exists() else ""
+    plan = gh.build_request(p, text)
+    mode = (body.mode if body else "auto") or "auto"
+    tok = gh.token()
+
+    if tok and mode != "url":
+        try:
+            issue = gh.create_issue(p, text, tok)
+            _append_request_log(p, issue, "api")
+            return {**plan, "mode": "api", "url": issue["url"], "number": issue.get("number"),
+                    "message": f"깃허브에 이미지 요청 이슈 #{issue.get('number')} 를 등록했습니다."}
+        except Exception as e:
+            plan["fallback_error"] = str(e)[:300]
+            plan["copy_body"] = True
+            _append_request_log(p, {"url": plan["url"]}, "url", error=str(e)[:200])
+            return {**plan, "mode": "url",
+                    "message": "토큰으로 등록하지 못해 1클릭 등록 화면을 여는 방법으로 넘어갑니다."}
+
+    _append_request_log(p, {"url": plan["url"]}, "url")
+    return {**plan, "mode": "url",
+            "message": "깃허브 새 이슈 화면을 열었습니다. [Create]만 누르면 케빈에게 전달됩니다."}
+
+
+def _append_request_log(p: dict, issue: dict, mode: str, error: str = "") -> None:
+    try:
+        rec = {"time": now(), "mode": mode, "url": issue.get("url", ""),
+               "number": issue.get("number")}
+        if error:
+            rec["error"] = error
+        log = p.setdefault("request_log", [])
+        log.append(rec)
+        p["request_log"] = log[-20:]
+        save(p)
+    except Exception:
+        pass
+
+
+@app.get("/api/inbox/auto")
+def inbox_auto_status():
+    return ib.status()
+
+
+class InboxAutoIn(BaseModel):
+    enabled: bool | None = None
+    auto_assemble: bool | None = None
+
+
+@app.post("/api/inbox/auto")
+def inbox_auto_set(body: InboxAutoIn):
+    patch = {}
+    if body.enabled is not None:
+        patch["auto_receive"] = bool(body.enabled)
+    if body.auto_assemble is not None:
+        patch["auto_assemble_on_receive"] = bool(body.auto_assemble)
+    if patch:
+        sch.save_settings(patch)
+    ib.start_worker()
+    return ib.status()
+
+
+@app.post("/api/inbox/check")
+def inbox_check_now():
+    def work(progress):
+        progress(25, "깃허브 assets_inbox 확인 중…")
+        res = ib.receive_once("manual")
+        progress(100, res.get("message") or "확인 완료")
+        return res
+
+    return {"job": start_job("inbox", work)}
 
 
 @app.get("/api/inbox")

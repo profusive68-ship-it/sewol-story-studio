@@ -23,6 +23,10 @@ DEFAULTS = {
     "daily_auto_upload": True,
     "pin": "",
     "allow_remote": True,
+    # 깃허브 assets_inbox 자동 수신
+    "auto_receive": True,
+    "auto_assemble_on_receive": False,
+    "github_token": "",
 }
 
 

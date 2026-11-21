@@ -7,6 +7,8 @@ from copy import deepcopy
 
 from .paths import CONFIG_PATH
 
+DEFAULT_GITHUB_REPO = "profusive68-ship-it/sewol-story-studio"
+
 DEFAULT_CONFIG = {
     "gemini_api_key": "",
     "text_model": "gemini-2.5-flash",
@@ -20,6 +22,9 @@ DEFAULT_CONFIG = {
     "youtube_publish_at": "",
     "youtube_title_index": 0,
     "youtube_auto_upload": False,
+    # 이미지 요청 이슈를 버튼 한 번에 자동 등록할 때 씁니다 (비워 두면 새 이슈 화면을 엽니다)
+    "github_token": "",
+    "github_repo": DEFAULT_GITHUB_REPO,
 }
 
 # ── 영상 포맷 ────────────────────────────────────────────────────────────────
@@ -165,6 +170,7 @@ def save_config(patch: dict) -> dict:
 def public_config() -> dict:
     cfg = load_config()
     key = cfg.get("gemini_api_key") or ""
+    gh = (cfg.get("github_token") or "").strip()
     return {
         "has_key": bool(key),
         "key_masked": (key[:6] + "••••••••" + key[-4:]) if len(key) > 12 else ("✓ 저장됨" if key else ""),
@@ -175,4 +181,7 @@ def public_config() -> dict:
         "youtube_publish_at": cfg.get("youtube_publish_at", ""),
         "youtube_title_index": cfg.get("youtube_title_index", 0),
         "youtube_auto_upload": cfg.get("youtube_auto_upload", False),
+        "has_github_token": bool(gh),
+        "github_token_masked": (gh[:4] + "••••••••" + gh[-4:]) if len(gh) > 10 else ("✓ 저장됨" if gh else ""),
+        "github_repo": cfg.get("github_repo") or DEFAULT_GITHUB_REPO,
     }

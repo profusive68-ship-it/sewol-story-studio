@@ -35,6 +35,16 @@ code{background:rgba(255,255,255,.06);padding:1px 6px;border-radius:6px;font-siz
 }
 .chip.ok{color:#cfe9c9;border-color:rgba(139,201,139,.35);background:rgba(139,201,139,.08)}
 .chip.bad{color:#f3c7c3;border-color:rgba(196,57,47,.4);background:rgba(196,57,47,.1)}
+.top-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.auto-inbox{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+.btn.recv-on{background:rgba(139,201,139,.16);border-color:rgba(139,201,139,.45);color:#dbf0d6}
+.btn.recv-off{background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.16);color:var(--muted)}
+.auto-inbox b{font-weight:900;letter-spacing:.04em}
+.auto-inbox .hint{margin:0}
+.requestbox{margin:12px 0 4px;padding:12px;border:1px dashed rgba(232,190,92,.35);border-radius:12px;background:rgba(232,190,92,.05)}
+.requestbox .hint{margin:8px 0 0}
+.inbox-event{border-left:3px solid rgba(139,201,139,.6);background:rgba(139,201,139,.07);border-radius:8px;padding:8px 11px;font-size:12.3px;color:#dff0da}
+.inbox-event b{color:#a9dc9f}
 .layout{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:22px;padding:22px 30px 60px;max-width:1560px;margin:0 auto}
 .col-main,.col-side{display:flex;flex-direction:column;gap:20px;min-width:0}
 .card{
@@ -174,6 +184,8 @@ textarea{resize:vertical;line-height:1.55}
   .layout{grid-template-columns:1fr;padding:16px}
   .two-col,.mode-grid{grid-template-columns:1fr}
   .top{flex-direction:column;align-items:flex-start;gap:12px;padding:16px}
+  .top-right{align-items:flex-start;width:100%}
+  .auto-inbox{justify-content:flex-start}
 }
 
 .copy-row{display:flex;flex-direction:column;gap:7px}
