@@ -135,10 +135,11 @@ def avatar_margin(width: int, height: int) -> int:
     return max(16, int(min(width, height) * 0.032))
 
 
-def host_portrait(project: dict, cfg: dict, px: int) -> tuple[str, "object", str]:
+def host_portraits(project: dict, cfg: dict, px: int) -> tuple[str, list, str]:
     """나레이션 성별에 맞는 라디오 진행자 초상을 2배 크기로 만든다.
 
-    returns (gender, PIL.Image, cache_key)
+    내장 진행자는 기본·입 다물·크게 벌림 3장을 돌려주고, 내 사진/직접 지정은 1장만.
+    returns (gender, [PIL.Image, ...], cache_key)
     """
     opt = project.get("options") or {}
     pdir = project_dir(project["id"])
@@ -146,14 +147,23 @@ def host_portrait(project: dict, cfg: dict, px: int) -> tuple[str, "object", str
     custom = str(opt.get("avatar_image") or "").strip()
     if custom and (pdir / custom).exists():
         path = pdir / custom
-        return "custom", avatar_from_photo(path, px * 2), f"custom_{int(path.stat().st_mtime)}"
+        return "custom", [avatar_from_photo(path, px * 2)], f"custom_{int(path.stat().st_mtime)}"
     if kind == "custom":
         kind = "auto"
     gender = kind if kind in ("male", "female") else narrator_gender(opt, cfg)
-    asset = HOST_DIR / f"host_{gender}.jpg"
-    if asset.exists():
-        return gender, avatar_from_photo(asset, px * 2), f"host_{gender}"
-    return gender, make_avatar(gender, px * 2), f"builtin_{gender}"
+    assets = [HOST_DIR / f"host_{gender}{suffix}.jpg" for suffix in ("", "_2", "_3")]
+    found = [p for p in assets if p.exists()]
+    if found:
+        # 사진을 갈아 끼우면(수정본 배포) mtime 이 달라져 모션 캐시도 새로 만든다
+        stamp = int(sum(p.stat().st_mtime for p in found))
+        return gender, [avatar_from_photo(p, px * 2) for p in found], f"host_{gender}_{stamp}"
+    return gender, [make_avatar(gender, px * 2)], f"builtin_{gender}"
+
+
+def host_portrait(project: dict, cfg: dict, px: int) -> tuple[str, "object", str]:
+    """(하위 호환) 대표 초상 1장만 돌려준다."""
+    gender, portraits, cache_key = host_portraits(project, cfg, px)
+    return gender, portraits[0], cache_key
 
 
 def build_card_images(project: dict, items: list[dict], width: int, height: int) -> dict[str, Path]:
@@ -329,15 +339,16 @@ def render_overlay(project: dict, items: list[dict], base: Path, mix_path: Path,
     if opt.get("avatar", True):
         # 실제 초상은 이번 렌더의 첫 프레임(미리보기)에도 쓰이므로 render/avatar.png 로 남긴다
         av_path = rdir / "avatar.png"
-        gender, portrait, cache_key = host_portrait(project, load_config(), av)
+        gender, portraits, cache_key = host_portraits(project, load_config(), av)
         host_note = f"{gender} 진행자"
-        portrait.save(av_path)
+        portraits[0].save(av_path)
         try:
-            frames_dir, frame_n = avatar_motion_frames(portrait, av, key=cache_key, fps=FPS,
+            frames_dir, frame_n = avatar_motion_frames(portraits, av, key=cache_key, fps=FPS,
                                                        cycle=AVATAR_MOTION_CYCLE,
                                                        move=AVATAR_MOTION_SECONDS)
             cmd += ["-stream_loop", "-1", "-framerate", str(FPS), "-i", str(frames_dir / "a%04d.png")]
-            host_note += f" · 모션 {frame_n}프레임"
+            host_note += (f" · 발화 모션 {frame_n}프레임" if len(portraits) > 1
+                          else f" · 모션 {frame_n}프레임")
         except Exception:
             # 모션 생성이 실패해도 정지 아바타로 제작은 계속된다
             cmd += ["-loop", "1", "-i", str(av_path)]

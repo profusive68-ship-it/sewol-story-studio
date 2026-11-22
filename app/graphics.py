@@ -223,34 +223,143 @@ def live_badge_frames(w: int, fps: int = 25, period: float = 0.8) -> tuple[Path,
 
 
 # ── 진행자 모션(정지 사진처럼 보이지 않게) ────────────────────────────────
-def avatar_motion_frames(img: Image.Image, size: int, key: str = "host", fps: int = 25,
-                         cycle: float = 6.0, move: float = 1.6) -> tuple[Path, int]:
-    """6초 주기 중 1.6초만 아주 살짝 — 숨쉬기 줌(≈1.035) + 미세 상하/좌우 + 고개 기울기
-    + ON-AIR 링 펄스. 나머지 구간은 1% 안팎의 잔잔한 호흡만 남는다.
+def _hash01(i: int, salt: int = 0) -> float:
+    """0~1 고정 난수 — 같은 프레임은 언제나 같은 리듬이 되도록(캐시 재사용)."""
+    x = (i * 1103515245 + 12345 + salt * 7919) & 0x7FFFFFFF
+    return x / 0x7FFFFFFF
+
+
+def _smooth(x: float) -> float:
+    x = max(0.0, min(1.0, x))
+    return x * x * (3.0 - 2.0 * x)
+
+
+# 6초 한 주기 안에서 실제로 말하는 구간(초) — 대사 · 숨 고르기 · 대사 · 쉼 · 마무리
+SPEECH_SPANS = ((0.18, 2.10), (2.86, 4.02), (4.62, 5.46))
+SPEECH_SYLLABLES_PER_SEC = 4.4      # 한국어 낭독 속도에 맞춘 음절 리듬
+NOD_BEATS = ((2.26, 0.58), (4.20, 0.50), (5.44, 0.46))   # 대본 보며 끄덕이는 순간(시작, 길이)
+NOD_EDGE = 0.16                     # 끄덕임은 짧게 — 프레임이 겹쳐 보이지 않게
+
+
+def _speech_openness(t: float) -> float:
+    """입 벌림 0~1 — 말하는 구간에서만 음절 리듬으로 벌렸다 다문다."""
+    val = 0.0
+    for si, (a, b) in enumerate(SPEECH_SPANS):
+        if a <= t < b:
+            u = (t - a) * SPEECH_SYLLABLES_PER_SEC
+            k = int(u)
+            ph = u - k
+            amp = 0.6 + 0.4 * _hash01(k + si * 97, 5)
+            if _hash01(k + si * 131, 9) < 0.18:      # 짧게 다물었다 떼는 음절
+                amp *= 0.3
+            env = min(1.0, (t - a) / 0.14, (b - t) / 0.16)   # 구간 양끝은 다문 입
+            val = max(val, amp * (math.sin(math.pi * ph) ** 0.8) * max(0.0, env))
+    return min(1.0, max(0.0, val))
+
+
+def _nod_weight(t: float) -> float:
+    """끄덕임 0~1 — 대본/마이크 쪽으로 고개를 살짝 숙였다 드는 순간.
+
+    프레임을 섞지 않고 화면 전체를 아주 작게 기울·내려앉히는 데 쓰므로,
+    다른 사진이 겹쳐 보이는 잔상이 생기지 않는다.
     """
+    w = 0.0
+    for start, dur in NOD_BEATS:
+        if start <= t < start + dur:
+            u = (t - start) / dur
+            edge = min(0.5, NOD_EDGE / dur)
+            if u < edge:
+                w = max(w, _smooth(u / edge))
+            elif u > 1.0 - edge:
+                w = max(w, _smooth((1.0 - u) / edge))
+            else:
+                w = 1.0
+    return w
+
+
+def _avatar_weights(t: float, n: int) -> list[float]:
+    """프레임별 블렌드 가중치(합 1.0).
+
+    프레임 순서: [기본(입 벌림), 입 다물, 크게 벌림]. 세 장의 차이는 입 주변뿐이라
+    가중치를 섞어도 사진이 겹쳐 보이지 않고, 입 모양이 자연스럽게 이어진다.
+    """
+    if n <= 1:
+        return [1.0]
+    mouth = _speech_openness(t)
+    if n == 2:
+        return [1.0 - mouth, mouth]
+    # 입 벌림 0 → 입 다물, 0.5 → 기본, 1 → 크게 벌림
+    closed = max(0.0, 1.0 - 2.0 * mouth)
+    wide = max(0.0, 2.0 * mouth - 1.0)
+    base = max(0.0, 1.0 - closed - wide)
+    return [base, closed, wide]
+
+
+def _avatar_pose(frame: Image.Image, S: int, t: float, move: float,
+                 talking: bool, nod: float = 0.0) -> Image.Image:
+    """호흡 줌 + 아주 작은 상하/좌우 + 고개 기울기 + 끄덕임 때의 살짝 내려앉는 무게."""
+    if talking:
+        # 말하는 동안: 프레임 변화가 주인공, 흔들림은 1% 안쪽의 잔잔한 호흡만
+        breath = math.sin(math.tau * t / 5.2)
+        zoom = 1.006 + 0.005 * breath
+        dx = S * 0.0035 * math.sin(math.tau * t / 7.1)
+        dy = -S * 0.0025 * (0.5 - 0.5 * math.cos(math.tau * t / 6.3))
+        ang = 0.22 * math.sin(math.tau * t / 8.4)
+        # 끄덕일 때는 아바타 전체가 살짝 내려앉고 고개를 끄덕인다(사진 두 장을 포개지 않아 잔상 없음)
+        dy += S * 0.008 * nod
+        ang += 0.6 * nod
+        zoom += 0.006 * nod
+    else:
+        # 사진 1장: 6초 중 move 초만 살짝 — 숨쉬기 줌(≈1.035) + 미세 상하/좌우 + 기울기
+        e = math.sin(math.pi * (t / move)) ** 2 if t < move else 0.0
+        breath = math.sin(math.tau * t / 4.2)
+        zoom = 1.008 + 0.004 * breath + 0.028 * e
+        dx = S * 0.008 * math.sin(math.tau * t / move) * e
+        dy = -S * 0.011 * e
+        ang = 0.9 * math.sin(math.tau * t / move) * e
+    w2 = max(2, int(round(S * zoom)) // 2 * 2)
+    z = frame.resize((w2, w2), Image.LANCZOS)
+    canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    canvas.paste(z, (int((S - w2) / 2 + dx), int((S - w2) / 2 + dy)))
+    if abs(ang) > 0.02:
+        canvas = canvas.rotate(ang, resample=Image.BICUBIC, center=(S / 2, S / 2))
+    return canvas
+
+
+def avatar_motion_frames(img, size: int, key: str = "host", fps: int = 25,
+                         cycle: float = 6.0, move: float = 1.6) -> tuple[Path, int]:
+    """6초 주기 진행자 모션 — 로컬 PIL 계산(0원) + 프레임 캐시.
+
+    · 사진 1장(내 사진·직접 지정): 기존과 같은 숨쉬기 모션.
+      — 6초 중 1.6초만 숨쉬기 줌 + 미세 상하/좌우 + 고개 기울기, 나머지는 잔잔한 호흡.
+    · 사진 2~3장(기본·입 다물·크게 벌림): 실제 대사 리듬으로 프레임을 크로스페이드해
+      성우가 마이크 앞에서 말하는 것처럼 입이 움직이고, 끄덕임은 화면 전체를 아주 작게
+      기울·내려앉혀 사진이 겹쳐 보이는 잔상 없이 고개 움직임을 만든다.
+    """
+    imgs = list(img) if isinstance(img, (list, tuple)) else [img]
+    imgs = [im for im in imgs if im is not None][:3]
+    if not imgs:
+        raise ValueError("진행자 이미지가 없습니다")
     n = max(8, int(round(cycle * fps)))
-    safe = re.sub(r"[^0-9A-Za-z_.-]", "_", str(key))[:60] or "host"
-    out = CACHE_DIR / "avatar_motion" / f"am_{safe}_{int(size)}_{int(fps)}_{int(cycle * 100)}"
+    safe = re.sub(r"[^0-9A-Za-z_.-]", "_", str(key))[:56] or "host"
+    tag = "" if len(imgs) == 1 else f"_f{len(imgs)}"
+    out = CACHE_DIR / "avatar_motion" / f"am_{safe}{tag}_{int(size)}_{int(fps)}_{int(cycle * 100)}"
     if (out / "done").exists():
         return out, n
     out.mkdir(parents=True, exist_ok=True)
     S = size * 2
-    base = img.convert("RGBA").resize((S, S), Image.LANCZOS)
+    pool = [np.asarray(im.convert("RGBA").resize((S, S), Image.LANCZOS), dtype=np.float32)
+            for im in imgs]
+    talking = len(pool) > 1
     for i in range(n):
         t = i / fps
-        ph = t % cycle
-        e = math.sin(math.pi * (ph / move)) ** 2 if ph < move else 0.0
-        breath = math.sin(math.tau * t / 4.2)
-        zoom = 1.008 + 0.004 * breath + 0.028 * e
-        dx = S * 0.008 * math.sin(math.tau * ph / move) * e
-        dy = -S * 0.011 * e
-        ang = 0.9 * math.sin(math.tau * ph / move) * e
-        w2 = max(2, int(round(S * zoom)) // 2 * 2)
-        z = base.resize((w2, w2), Image.LANCZOS)
-        canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        canvas.paste(z, (int((S - w2) / 2 + dx), int((S - w2) / 2 + dy)))
-        if abs(ang) > 0.02:
-            canvas = canvas.rotate(ang, resample=Image.BICUBIC, center=(S / 2, S / 2))
+        w = _avatar_weights(t % cycle, len(pool))
+        frame = pool[0] * w[0]
+        for k in range(1, len(pool)):
+            frame = frame + pool[k] * w[k]
+        img_i = Image.fromarray(np.clip(frame + 0.5, 0, 255).astype(np.uint8), "RGBA")
+        nod = _nod_weight(t % cycle) if talking else 0.0
+        canvas = _avatar_pose(img_i, S, t, move, talking, nod)
         # ON-AIR 링이 천천히 숨쉬는 펄스(2.4초)
         ring_pulse = 0.5 - 0.5 * math.cos(math.tau * t / 2.4)
         ring = Image.new("RGBA", (S, S), (0, 0, 0, 0))
