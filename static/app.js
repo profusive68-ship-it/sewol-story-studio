@@ -698,6 +698,7 @@ async function openProject(id, opts = {}) {
   startStudioPolling(id);
   loadGallery(id, true);
   loadKevinTimeline(id);
+  if ((p.scenes || []).length && !SCRIPT_MODE) openScriptRead(id);
   if (!opts.keepStep) setStep(currentStepFor(p), { force: true });
   else setStep(STEP, { force: true });
   await loadProjects();

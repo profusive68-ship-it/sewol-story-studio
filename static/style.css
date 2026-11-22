@@ -416,3 +416,8 @@ body.drawer-open{overflow:hidden}
   .stagebars{grid-template-columns:1fr}
   .drawer-head,.drawer-body{width:100%;max-width:100vw}
 }
+
+/* 1단계 — 대본 전문을 크게 펼쳐 검토 */
+.panel .script{max-height:560px;font-size:13.2px;line-height:1.75}
+.panel .sedit-list{max-height:760px}
+.panel .line-list{max-height:520px}
