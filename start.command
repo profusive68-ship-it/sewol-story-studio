@@ -15,15 +15,19 @@ say "  │   대본 → 성우 → 이미지 → 영상 → 썸네일       │"
 say "  └──────────────────────────────────────────────┘"
 say "${NC}"
 
-# 1) Python 3 확인
-if ! command -v python3 >/dev/null 2>&1; then
+# 1) Python 3 확인 (3.10+ 우선, 없으면 python3)
+PY=""
+for c in python3.12 python3.11 python3.10 python3; do
+  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+if [ -z "$PY" ]; then
   say "${RED}Python 3 가 없습니다.${NC}"
   say "https://www.python.org/downloads/macos/ 에서 Python 3.10 이상을 설치한 뒤 다시 실행해 주세요."
   say "(또는 터미널에서: brew install python)"
   pause_exit 1
 fi
-PYVER=$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')
-say "· Python ${PYVER} 확인"
+PYVER=$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])')
+say "· Python ${PYVER} 확인 ($PY)"
 
 # 2) ffmpeg 확인
 if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -49,7 +53,7 @@ say "· ffmpeg 확인: $(ffmpeg -version 2>/dev/null | head -1 | cut -c1-60)"
 # 3) 가상환경
 if [ ! -d ".venv" ]; then
   say "· 처음 실행이라 전용 환경을 만듭니다 (1~2분)…"
-  python3 -m venv .venv || { say "${RED}가상환경 생성 실패${NC}"; pause_exit 1; }
+  "$PY" -m venv .venv || { say "${RED}가상환경 생성 실패${NC}"; pause_exit 1; }
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
