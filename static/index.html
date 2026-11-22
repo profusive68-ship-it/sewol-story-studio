@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>세월의 사연극장 · 자동화 스튜디오</title>
+<title>세월의 사연극장 · 4단계 스튜디오</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,54 +11,460 @@
   <div class="brand">
     <div class="mark">歲</div>
     <div>
-      <h1>세월의 사연극장</h1>
-      <p>맥북 원클릭 자동화 스튜디오 · 대본 → 성우 → 이미지 → 영상 → 썸네일</p>
+      <h1>세월의 사연극장 <span class="ver" id="verTag">v2.0.0</span></h1>
+      <p>4단계 스튜디오 · 대본 → 이미지·음성 → 렌더링 → 확인·업로드</p>
     </div>
   </div>
   <div class="top-right">
     <div class="chips" id="health"><span class="chip">서버 확인 중…</span></div>
-    <div class="auto-inbox">
+    <div class="row top-actions">
       <button class="btn small recv-on" id="btnAutoInbox" title="깃허브 assets_inbox 폴더를 20초마다 확인해 새 이미지를 자동으로 받습니다">🔄 자동 이미지 수신 <b id="autoInboxState">ON</b></button>
-      <span class="hint small" id="autoInboxMsg">확인 대기 중…</span>
+      <button class="btn ghost small" id="btnSettings">⚙️ 설정</button>
     </div>
   </div>
 </header>
 
-<main class="layout">
+<!-- 4단계 스텝 바 — 한 번에 한 단계만 보여 준다 -->
+<nav class="stepbar" id="stepBar" aria-label="제작 단계">
+  <button class="stepbtn" data-step="1" type="button">
+    <b>1</b><span>대본 설계·검토</span><i>길이·장르·시나리오·대본 수정</i>
+  </button>
+  <button class="stepbtn" data-step="2" type="button">
+    <b>2</b><span>이미지·음성 검토</span><i>성우 녹음·케빈 이미지·미리듣기</i>
+  </button>
+  <button class="stepbtn" data-step="3" type="button">
+    <b>3</b><span>영상 렌더링</span><i>BGM·자막·인코딩</i>
+  </button>
+  <button class="stepbtn" data-step="4" type="button">
+    <b>4</b><span>최종 확인·업로드</span><i>감수·썸네일·업로드 결정</i>
+  </button>
+</nav>
+
+<!-- 상단 고정 진행 바 — 2단계 이미지 수신처럼 오래 걸리는 일을 바로 보여 준다 -->
+<div class="runbar" id="runBar">
+  <span class="runbar-title" id="runTitle">새 사연을 시작해 보세요</span>
+  <span class="runbar-item" id="runMedia">음성 —</span>
+  <span class="runbar-item" id="runImages">이미지 —/—</span>
+  <span class="runbar-item" id="runRender">렌더링 —</span>
+  <span class="runbar-note" id="runNote"></span>
+</div>
+
+<main class="studio">
   <div class="col-main">
+
+    <!-- ══════════ 1단계 · 대본 설계·검토 ══════════ -->
+    <section class="panel" id="panel1" data-step="1">
+      <div class="panel-head">
+        <h2><span class="num">1</span> 대본 설계·검토</h2>
+        <span class="badge" id="step1Badge">대본 없음</span>
+      </div>
+      <p class="hint">영상 길이·장르·화자·톤을 고르고, <b>시나리오 추천</b>을 누르거나 직접 주제를 적어 대본을 만듭니다.
+        만들어진 대본은 이 화면에서 장면·화자·감정·대사까지 직접 고쳐 저장할 수 있습니다.</p>
+
+      <label class="label">사연 종류</label>
+      <div class="genre-grid" id="genreGrid"></div>
+
+      <label class="label">영상 길이 · 비율</label>
+      <div class="preset-grid" id="presetGrid"></div>
+
+      <div class="idea-box">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <label class="label" style="margin:0" for="topic">주제·훅 (직접 입력하거나 추천에서 고르세요)</label>
+          <button class="btn small" id="btnIdeas" type="button">✨ 시나리오 추천받기</button>
+        </div>
+        <textarea id="topic" rows="2" placeholder="예) 제주 서귀포, 70대 어머니와 아들의 김치통 / 시댁 갈등 사이다 / 직접 쓰고 싶은 한 줄"></textarea>
+        <div id="ideaList" class="idea-list" hidden></div>
+        <p class="hint small" id="ideaMsg">추천을 누르면 AI가 이 장르에 맞는 주제·첫 3초 훅 3~5개를 골라 줍니다. 카드를 누르면 위 칸에 들어갑니다.</p>
+      </div>
+
+      <details class="more" id="toneBox" open>
+        <summary>화자 · 톤 · 진행자 · 자막 설정</summary>
+        <div class="two-col" style="margin-top:10px">
+          <div>
+            <label class="label" for="voiceMode">성우 배역</label>
+            <select id="voiceMode">
+              <option value="multi">다중 성우 라디오 드라마 (해설 + 노인 + 여성)</option>
+              <option value="male">단일 남성 낭독</option>
+              <option value="female">단일 여성 낭독</option>
+            </select>
+            <p class="hint small">해설과 인물은 <b>절대 같은 목소리를 쓰지 않습니다.</b> (해설 onyx ↔ 인물 ash·echo·verse·nova·shimmer·sage)</p>
+            <label class="label" for="storyTone">전체 톤</label>
+            <select id="storyTone">
+              <option value="warm">따뜻하고 정 많은 (가족 감동)</option>
+              <option value="calm">담담하고 차분한 (라디오 사연)</option>
+              <option value="tense">처절하고 긴장감 있는 (미스터리)</option>
+              <option value="sassy">통쾌한 사이다 (시댁·갑질 반전)</option>
+            </select>
+            <label class="label" for="rate">낭독 속도 <output id="rateOut">0%</output></label>
+            <input type="range" id="rate" min="-5" max="10" step="1" value="0">
+            <p class="hint small">모든 화자에게 <b>같은 속도</b>가 적용됩니다(±3% 안에서만 조절, v2.0.0). 시니어 사연은 0%를 권합니다.</p>
+          </div>
+          <div>
+            <label class="label">우측 하단 원형 진행자 · <b>290px</b> 라디오 DJ</label>
+            <label class="switch tight"><input type="checkbox" id="avatar" checked><span></span>
+              <div><b>진행자 아바타 표시</b><small>나레이션 성별에 맞는 남/여 스튜디오 DJ 또는 내 사진</small></div>
+            </label>
+            <div class="row">
+              <select id="avatarKind">
+                <option value="auto">자동 (나레이션 목소리 따라가기)</option>
+                <option value="female">여성 라디오 진행자</option>
+                <option value="male">남성 라디오 진행자</option>
+                <option value="custom">내 사진 사용</option>
+              </select>
+              <input type="file" id="avatarFile" accept="image/*" hidden>
+              <button class="btn ghost small" id="btnAvatarFile">사진 선택</button>
+            </div>
+            <label class="switch tight"><input type="checkbox" id="liveBadge" checked><span></span>
+              <div><b>● LIVE 표시</b><small>아바타 위 ON-AIR 배지 · 0.8초 붉은 점 점멸</small></div>
+            </label>
+            <label class="label">자막 크기</label>
+            <div class="seg" id="subSize">
+              <label><input type="radio" name="subSize" value="senior" checked><span>시니어 특대 (92px)</span></label>
+              <label><input type="radio" name="subSize" value="basic"><span>기본 (70px)</span></label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details class="more">
+        <summary>훅 · 예고 · 참여 유도 (좋아요·구독)</summary>
+        <label class="switch"><input type="checkbox" id="hook15" checked><span></span>
+          <div><b>첫 15초 반전 훅</b><small>0초부터 절정 장면으로 바로 진입 (인사·소개 없음)</small></div>
+        </label>
+        <label class="switch"><input type="checkbox" id="sequel" checked><span></span>
+          <div><b>엔딩 예고 / 후속편 떡밥</b><small>마지막에 다음 사연 복선을 나레이션으로</small></div>
+        </label>
+        <div class="sub-box" id="teaserBox">
+          <label class="label">엔딩 예고 방식</label>
+          <select id="teaserMode">
+            <option value="auto_sequel">① 이번 사연의 6개월 뒤 후속편 복선 자동 생성</option>
+            <option value="next_story">② 다음에 올릴 사연 / 지난 인기 사연 후속편 예고 자동 추천</option>
+            <option value="manual">③ 직접 입력</option>
+          </select>
+          <textarea id="teaserText" rows="2" placeholder="직접 입력을 고르면 여기에 예고 멘트를 적어 주세요. (비우면 자동 생성)"></textarea>
+        </div>
+        <label class="switch"><input type="checkbox" id="likeVoice" checked><span></span>
+          <div><b>중반 좋아요 멘트 (음성)</b><small>전체의 약 55%, 반전 직전에 해설자가 1~2문장으로</small></div>
+        </label>
+        <textarea id="likeVoiceText" rows="2" placeholder="비우면 기본 멘트가 들어갑니다."></textarea>
+        <label class="switch"><input type="checkbox" id="likeBanner" checked><span></span>
+          <div><b>중반 좋아요 배너 (화면)</b><small>같은 시점에 우측 상단에 5초</small></div>
+        </label>
+        <label class="switch"><input type="checkbox" id="outroCta" checked><span></span>
+          <div><b>엔딩 구독·지역 인사 (음성)</b><small>후속편 예고 바로 뒤, 영상 맨 끝에서만</small></div>
+        </label>
+        <textarea id="ctaText" rows="3" placeholder="비우면 기본 멘트가 들어갑니다."></textarea>
+        <label class="switch"><input type="checkbox" id="endScreen" checked><span></span>
+          <div><b>마지막 10초 최종화면</b><small>구독 원형·다음 영상 카드 자리를 비워 둔 레이아웃</small></div>
+        </label>
+        <label class="switch"><input type="checkbox" id="sleepRain"><span></span>
+          <div><b>취침용 빗소리 엔딩</b><small>마지막 20~30초 잔잔한 빗소리로 서서히 사라지기</small></div>
+        </label>
+      </details>
+
+      <label class="label">이미지 방식</label>
+      <div class="mode-grid">
+        <label class="mode">
+          <input type="radio" name="imageMode" value="A">
+          <div><b>모드 A · 완전자동</b><span>Gemini가 대본 + 장면 이미지까지 만들어 바로 영상 완성</span>
+            <small>API 키 필요 · 이미지 생성은 유료 한도가 쓰입니다</small></div>
+        </label>
+        <label class="mode">
+          <input type="radio" name="imageMode" value="B" checked>
+          <div><b>모드 B · 0원 협업</b><span>대본 + 이미지 요청서를 만들고, 받아온 s01.png… 를 넣어 조립</span>
+            <small>이미지 생성 비용 0원 · 케빈에게 요청서를 그대로 보내면 됩니다</small></div>
+        </label>
+      </div>
+
+      <div class="make-row">
+        <button class="btn primary big" id="btnCreate" type="button">대본 만들기</button>
+        <span class="hint small" id="makeHint">API 키가 없으면 예시 대본으로 만듭니다. 대본이 만들어지면 아래에서 바로 고칠 수 있습니다.</span>
+      </div>
+
+      <!-- 대본 검토·수정 — 1단계의 핵심 -->
+      <div class="scriptbox" id="scriptBox">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <label class="label" style="margin:0">📖 대본 전체 읽기 / ✏️ 수정하기</label>
+          <div class="row" style="gap:6px">
+            <button class="btn ghost small" id="btnScriptRead" type="button">📖 대본 전체 읽기</button>
+            <button class="btn small" id="btnScriptEdit" type="button">✏️ 수정하기</button>
+          </div>
+        </div>
+        <p class="hint small" id="scriptSummary">아직 대본이 없습니다. [대본 만들기]를 먼저 눌러 주세요.</p>
+        <div class="script" id="scriptView" hidden></div>
+        <div id="scriptEditor" hidden></div>
+        <div id="scriptSaveResult"></div>
+      </div>
+
+      <div class="stepfoot">
+        <span class="hint small" id="step1Foot">대본을 확인했으면 2단계로 넘어가 성우·이미지를 만듭니다.</span>
+        <button class="btn primary big" id="btnNext2" type="button">다음: 2단계로 (이미지·음성 만들기) →</button>
+      </div>
+    </section>
+
+    <!-- ══════════ 2단계 · 이미지 & 음성 제작·검토 ══════════ -->
+    <section class="panel" id="panel2" data-step="2" hidden>
+      <div class="panel-head">
+        <h2><span class="num">2</span> 이미지 &amp; 음성 제작·검토</h2>
+        <span class="badge" id="step2Badge">대기</span>
+      </div>
+      <p class="hint">1단계 대본으로 <b>성우 음성</b>을 만들고, <b>케빈에게 이미지</b>를 요청합니다.
+        아래 타임라인과 상단 바에서 <b>몇 번째 단계인지·사진이 몇 장 도착했는지</b>를 바로 확인하세요.</p>
+
+      <!-- 실시간 진행 타임라인 -->
+      <div class="timeline" id="mediaTimeline">
+        <div class="tl-item" data-tl="voice"><span class="dot"></span>
+          <div><b>① 성우 음성</b><div class="tl-note" id="tlVoice">아직 만들지 않았습니다.</div></div></div>
+        <div class="tl-item" data-tl="request"><span class="dot"></span>
+          <div><b>② 케빈에게 이미지 요청</b><div class="tl-note" id="tlRequest">요청 전입니다.</div></div></div>
+        <div class="tl-item" data-tl="images"><span class="dot"></span>
+          <div><b>③ 이미지 도착</b><div class="tl-note" id="tlImages">0/0장</div>
+            <div class="bar mini"><div id="tlImagesBar"></div></div></div></div>
+        <div class="tl-item" data-tl="review"><span class="dot"></span>
+          <div><b>④ 검토</b><div class="tl-note" id="tlReview">음성·이미지를 확인하고 3단계로 넘어가세요.</div></div></div>
+      </div>
+
+      <div class="card soft">
+        <div class="card-head">
+          <h3>🎙️ 성우 음성</h3>
+          <div class="row">
+            <button class="btn small" id="btnTtsRun" type="button">성우 음성 만들기</button>
+            <button class="btn ghost small" id="btnVoicePlan" type="button">목소리 배정 보기</button>
+          </div>
+        </div>
+        <p class="hint small" id="voiceSummary">해설과 인물의 목소리가 겹치지 않게 배정됩니다. 속도는 모든 화자가 같습니다.</p>
+        <div id="voicePlanBox" class="voice-plan" hidden></div>
+        <div class="bar"><div id="ttsBar"></div></div>
+        <p class="hint small" id="ttsMsg">—</p>
+        <div id="lineList" class="line-list"><p class="hint small">대본이 있으면 대사별 미리듣기·재녹음이 여기에 나옵니다.</p></div>
+      </div>
+
+      <div class="card soft">
+        <div class="card-head">
+          <h3>🖼️ 장면 이미지 (케빈 요청)</h3>
+          <div class="row">
+            <button class="btn primary small" id="btnGhRequest" type="button">📤 케빈에게 이미지 요청하기</button>
+            <button class="btn small" id="btnGenImages" type="button" hidden>🖼️ 이미지 자동 생성 (모드 A)</button>
+            <button class="btn ghost small" id="btnInboxCheck" type="button">지금 이미지 확인</button>
+          </div>
+        </div>
+        <p class="hint small">요청서 파일명(s01.png …) 그대로 오면 20초마다 자동으로 들어옵니다.
+          아래 <b>이미지 수신 상태</b>에 마지막 확인·받은 파일·오류가 그대로 표시됩니다.</p>
+        <div class="inbox-status" id="inboxStatus">아직 확인하지 않았습니다.</div>
+        <label class="label" id="imgCount">장면 이미지 (0/0)</label>
+        <div class="img-grid gallery" id="imgGallery"><p class="hint small">이미지 불러오는 중…</p></div>
+        <div class="drop" id="dropZone">이미지 파일을 여기에 끌어다 놓거나 클릭해 선택하세요<br><small>s01.png, s02.png … 이름 그대로</small></div>
+        <input type="file" id="imgInput" accept="image/*,.zip" multiple hidden>
+        <div class="requestbox" id="imgReviseBox">
+          <label class="label">✏️ 이미지 수정 지시 (컷별)</label>
+          <div class="row">
+            <input id="imgReviseNote" placeholder="예: 3번 컷 표정 더 놀랍게, 5번 더 밝은 톤으로">
+            <button class="btn primary small" id="btnImgRevise" type="button">✏️ 케빈에게 이미지 수정 요청</button>
+          </div>
+          <p class="hint small">컷 카드의 번호를 누르면 <b>“N번 컷 ”</b>이 이 칸에 들어갑니다. 케빈이 같은 파일명으로 다시 올리면 자동으로 바뀝니다.</p>
+          <div id="imgReviseResult"></div>
+        </div>
+        <div class="kevinbox">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <label class="label" style="margin:0">📊 케빈 실시간 진행 타임라인</label>
+            <button class="btn ghost small" id="btnKevin" type="button">🔄 새로고침</button>
+          </div>
+          <pre class="logbox" id="kevinTimeline">요청한 깃허브 이슈가 있으면 진행 단계가 여기에 시간순으로 표시됩니다.</pre>
+        </div>
+        <div id="ghRequestResult"></div>
+      </div>
+
+      <div class="stepfoot">
+        <button class="btn ghost" id="btnPrev1" type="button">← 1단계 (대본)</button>
+        <span class="hint small" id="step2Foot">음성·이미지를 확인했으면 3단계에서 영상을 만듭니다.</span>
+        <button class="btn primary big" id="btnNext3" type="button">다음: 3단계로 (영상 렌더링) →</button>
+      </div>
+    </section>
+
+    <!-- ══════════ 3단계 · 영상 렌더링 ══════════ -->
+    <section class="panel" id="panel3" data-step="3" hidden>
+      <div class="panel-head">
+        <h2><span class="num">3</span> 영상 렌더링</h2>
+        <span class="badge" id="step3Badge">대기</span>
+      </div>
+      <p class="hint">검토한 성우 음성 + 이미지 + 자막 + 효과음 + BGM + 원형 진행자를 합쳐 <code>final.mp4</code> 를 만듭니다.
+        단계별 진행률과 로그가 아래에 표시됩니다. (50초 쇼츠 3~5분, 40분 본편 40~80분)</p>
+
+      <div class="row" style="margin:6px 0 14px">
+        <button class="btn primary big" id="btnRender" type="button">🎬 영상 렌더링 시작</button>
+        <span class="hint small" id="renderState">아직 렌더링하지 않았습니다.</span>
+      </div>
+
+      <div class="stagebars" id="stageBars">
+        <div class="stagebar" data-stage="성우"><div class="sb-head"><b>성우</b><span>0%</span></div><div class="bar"><div></div></div></div>
+        <div class="stagebar" data-stage="BGM"><div class="sb-head"><b>BGM·효과음</b><span>0%</span></div><div class="bar"><div></div></div></div>
+        <div class="stagebar" data-stage="자막"><div class="sb-head"><b>자막</b><span>0%</span></div><div class="bar"><div></div></div></div>
+        <div class="stagebar" data-stage="인코딩"><div class="sb-head"><b>인코딩</b><span>0%</span></div><div class="bar"><div></div></div></div>
+      </div>
+      <div class="bar big"><div id="renderBar"></div></div>
+      <p class="job-msg" id="renderMsg">—</p>
+      <pre class="logbox" id="renderLog"></pre>
+      <div id="renderResult" class="result-links"></div>
+
+      <div class="stepfoot">
+        <button class="btn ghost" id="btnPrev2" type="button">← 2단계 (이미지·음성)</button>
+        <span class="hint small" id="step3Foot">렌더링이 끝나면 4단계에서 처음부터 끝까지 감수합니다.</span>
+        <button class="btn primary big" id="btnNext4" type="button">다음: 4단계로 (최종 확인·업로드) →</button>
+      </div>
+    </section>
+
+    <!-- ══════════ 4단계 · 최종 확인 & 업로드 ══════════ -->
+    <section class="panel" id="panel4" data-step="4" hidden>
+      <div class="panel-head">
+        <h2><span class="num">4</span> 최종 확인 &amp; 업로드</h2>
+        <span class="badge" id="step4Badge">대기</span>
+      </div>
+      <p class="hint">완성된 영상을 <b>처음부터 끝까지</b> 직접 보고, 썸네일·제목·설명·고정댓글을 확인한 뒤
+        업로드 방식을 고릅니다.</p>
+
+      <div class="final-video" id="finalVideo">
+        <p class="hint small">아직 완성된 영상이 없습니다. 3단계에서 렌더링해 주세요.</p>
+      </div>
+      <div class="row" style="margin:10px 0">
+        <button class="btn ghost small" id="btnOpenFolder" type="button">폴더 열기</button>
+        <button class="btn ghost small" id="btnShorts" type="button">📱 50초 쇼츠 뽑기</button>
+        <a class="btn small" id="lnkShorts" target="_blank" hidden>쇼츠 보기</a>
+        <a class="btn ghost small" id="lnkRequest" target="_blank">요청서</a>
+        <a class="btn ghost small" id="lnkCopy" target="_blank">업로드 카피</a>
+        <a class="btn ghost small" id="lnkSrt" target="_blank">자막</a>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <label class="label">썸네일 미리보기 · 문구 수정</label>
+          <div class="thumb-preview">
+            <figure><img id="thumb1Img" alt="썸네일 1"><figcaption>① 인물 드라마형</figcaption></figure>
+            <figure><img id="thumb2Img" alt="썸네일 2"><figcaption>② 대문짝 텍스트형</figcaption></figure>
+          </div>
+          <div class="thumb-edit">
+            <input id="th1a" placeholder="인물형 1번째 줄">
+            <input id="th1b" placeholder="인물형 2번째 줄">
+            <input id="th20" placeholder="대문짝 1번째 줄">
+            <input id="th21" placeholder="대문짝 2번째 줄">
+            <input id="th22" placeholder="대문짝 3번째 줄">
+            <input id="th23" placeholder="대문짝 4번째 줄">
+            <input id="th24" placeholder="대문짝 5번째 줄">
+            <button class="btn small" id="btnThumb" type="button">썸네일 다시 만들기</button>
+          </div>
+        </div>
+        <div>
+          <label class="label">업로드 결정</label>
+          <div class="publish-box">
+            <label class="switch tight"><input type="radio" name="publishDecision" value="now" checked><span></span>
+              <div><b>즉시 업로드</b><small>지금 바로 유튜브에 올립니다(공개 방식 선택)</small></div></label>
+            <label class="switch tight"><input type="radio" name="publishDecision" value="schedule"><span></span>
+              <div><b>예약 업로드</b><small>비공개로 올린 뒤 정한 시각에 공개</small></div></label>
+            <label class="switch tight"><input type="radio" name="publishDecision" value="hold"><span></span>
+              <div><b>보류하고 파일만 저장</b><small>업로드하지 않고 맥북에만 보관</small></div></label>
+            <div class="two-col" style="margin-top:10px">
+              <div><label class="label" for="pubPrivacy">공개 방식</label>
+                <select id="pubPrivacy">
+                  <option value="public">즉시 공개</option>
+                  <option value="unlisted">일부 공개</option>
+                  <option value="private">비공개</option>
+                </select></div>
+              <div><label class="label" for="pubAt">예약 시각 (한국)</label>
+                <input type="datetime-local" id="pubAt"></div>
+            </div>
+            <label class="label" for="pubTitle">올릴 제목</label>
+            <select id="pubTitle"></select>
+            <div class="row" style="margin-top:10px">
+              <button class="btn primary" id="btnPublish" type="button">이 결정으로 진행</button>
+              <span class="hint small" id="publishMsg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <label class="label">유튜브 제목 3안 — [억울함/갈등] + [결정적 단서] + [충격 반전]</label>
+      <div class="copy-row" id="titleCopy"></div>
+      <label class="label">설명문 + 챕터 + 해시태그</label>
+      <pre class="copybox" id="seoDesc"></pre>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small" data-copy-el="seoDesc" type="button">설명문 원클릭 복사</button>
+        <button class="btn ghost small" id="btnCopyTags" type="button">해시태그만 복사</button>
+      </div>
+      <label class="label">고정댓글</label>
+      <pre class="copybox" id="seoPinned"></pre>
+      <button class="btn small" data-copy-el="seoPinned" type="button">고정댓글 복사</button>
+
+      <div class="stepfoot">
+        <button class="btn ghost" id="btnPrev3" type="button">← 3단계 (렌더링)</button>
+        <span class="hint small" id="step4Foot">업로드는 이 화면에서 고른 결정으로만 진행됩니다.</span>
+        <button class="btn primary big" id="btnNewProject" type="button">새 사연 시작하기</button>
+      </div>
+    </section>
+
+    </div>
+
+  <!-- 우측 레일: 내 사연들 -->
+  <aside class="col-side">
+    <section class="card">
+      <div class="card-head"><h2>내 사연들</h2><button class="btn ghost small" id="btnRefresh" type="button">새로고침</button></div>
+      <div id="projectList" class="project-list"><p class="hint">아직 만든 사연이 없습니다.</p></div>
+    </section>
+
+    <section class="card weekend" id="weekendCard" hidden>
+      <div class="card-head"><h2>주말 2시간 몰아듣기</h2></div>
+      <p class="hint">완성된 사연 2~3개를 골라 하나로 잇습니다.</p>
+      <div id="weekendProjects" class="weekend-list"></div>
+      <input id="weekendTitle" placeholder="합본 제목 (비우면 자동)">
+      <button class="btn primary" id="btnCompile" type="button">합본 만들기</button>
+    </section>
+
+    <section class="card help">
+      <div class="card-head"><h2>사용 순서</h2></div>
+      <ol>
+        <li><b>1단계</b> 길이·장르 고르고 [대본 만들기] → 대본 수정·저장</li>
+        <li><b>2단계</b> [성우 음성 만들기] → [케빈에게 이미지 요청] → 도착 확인·컷 수정</li>
+        <li><b>3단계</b> [영상 렌더링 시작] → 진행률 확인</li>
+        <li><b>4단계</b> 영상 감수 → 썸네일·카피 확인 → 업로드 결정</li>
+      </ol>
+      <p class="hint small">폴더: <code>projects/사연번호/</code> · 결과물은 <code>output/</code> 안에 있습니다.</p>
+    </section>
+  </aside>
+</main>
+
+<!-- ══════════ ⚙️ 설정 드로어 (작업 화면과 분리) ══════════ -->
+<div class="drawer" id="settingsDrawer" hidden>
+  <div class="drawer-head">
+    <h2>⚙️ 설정</h2>
+    <button class="btn ghost small" id="btnSettingsClose" type="button">닫기 ✕</button>
+  </div>
+  <div class="drawer-body">
 
     <section class="card" id="apiCard">
       <div class="card-head">
-        <h2><span class="num">0</span> Gemini API 설정 · 대본 엔진</h2>
+        <h2><span class="num">🔑</span> Gemini API · 대본 엔진</h2>
         <span class="badge" id="apiBadge">확인 중</span>
       </div>
       <p class="hint">대본 생성과 완전자동 이미지 생성에 씁니다. 키는 이 맥북 안 <code>config.json</code> 에만 저장되고 바깥으로 나가지 않습니다.</p>
       <div class="row">
         <input type="password" id="apiKey" placeholder="AIza... 로 시작하는 Gemini API 키" autocomplete="off">
-        <button class="btn" id="btnSaveKey">저장</button>
-        <button class="btn ghost" id="btnTestKey">연결 테스트</button>
+        <button class="btn" id="btnSaveKey" type="button">저장</button>
+        <button class="btn ghost" id="btnTestKey" type="button">연결 테스트</button>
       </div>
       <p class="hint small" id="apiMsg">키가 없어도 예시 대본으로 전체 제작 흐름을 끝까지 시험할 수 있습니다.</p>
-      <label class="label" for="scriptEngine">대본 엔진 — <b>대본 엔진: Gemini (무료) / OpenAI 자동 보조</b></label>
+      <label class="label" for="scriptEngine">대본 엔진</label>
       <div class="row">
         <select id="scriptEngine">
-          <option value="auto">자동 — Gemini (무료) 먼저, 503·한도 초과면 OpenAI 자동 보조</option>
+          <option value="auto">자동 — Gemini (무료) / OpenAI 자동 보조</option>
           <option value="gemini">Gemini 단독 (무료)</option>
           <option value="openai">OpenAI 단독 (gpt-4o-mini)</option>
         </select>
-        <button class="btn small" id="btnScriptEngine">저장</button>
+        <button class="btn small" id="btnScriptEngine" type="button">저장</button>
         <span class="badge" id="scriptEngineBadge">자동</span>
       </div>
       <p class="hint small" id="scriptEngineMsg">
         자동 모드에서는 Gemini 가 503·429·한도 초과로 막혀도 같은 프롬프트를 <b>OpenAI Chat Completions(gpt-4o-mini)</b>로
-        이어서 보내 같은 형식(제목·설명·해시태그·챕터/장면·화자·감정·대사)의 대본을 받습니다.
-        OpenAI 키는 위 [🎙️ 음성 엔진] 카드의 키를 그대로 씁니다.
+        이어서 보내 같은 형식의 대본을 받습니다. OpenAI 키는 아래 [음성 엔진] 카드의 키를 그대로 씁니다.
       </p>
       <p class="hint small" id="scriptEngineState"></p>
-      <details class="more">
-        <summary>키 발급 방법 보기</summary>
-        <p>Google AI Studio(aistudio.google.com) → <b>Get API key</b> → 새 키 만들기 → 복사해서 위에 붙여넣기. 무료 한도로도 하루 몇 편은 충분합니다.</p>
-      </details>
     </section>
 
     <section class="card" id="ttsCard">
@@ -81,12 +487,12 @@
       <label class="label" for="openaiKey">OpenAI API Key</label>
       <div class="row">
         <input type="password" id="openaiKey" placeholder="sk-... 로 시작하는 OpenAI API 키" autocomplete="off">
-        <button class="btn" id="btnTtsSave">저장</button>
-        <button class="btn ghost" id="btnTtsTest">연결 테스트</button>
+        <button class="btn" id="btnTtsSave" type="button">저장</button>
+        <button class="btn ghost" id="btnTtsTest" type="button">연결 테스트</button>
       </div>
-      <p class="hint small" id="ttsMsg">
+      <p class="hint small" id="ttsKeyMsg">
         키 발급: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>
-        → <b>Create new secret key</b> → 복사해서 위 칸에 붙여넣기. 키는 이 맥북 <code>config.json</code> 에만 저장되고 화면에는 가려서 표시됩니다.
+        → <b>Create new secret key</b> → 복사해서 위 칸에 붙여넣기. 키는 이 맥북 <code>config.json</code> 에만 저장됩니다.
       </p>
       <label class="switch"><input type="checkbox" id="ttsFallback" checked><span></span>
         <div><b>OpenAI 실패 시 무료 edge-tts로 자동 대체</b><small>키가 없거나 사용 한도·오류일 때 제작이 멈추지 않습니다</small></div>
@@ -99,180 +505,36 @@
         <h2><span class="num">🔗</span> 케빈에게 이미지 요청 (깃허브)</h2>
         <span class="badge" id="ghBadge">토큰 없음</span>
       </div>
-      <p class="hint">사연을 열고 <b>[📤 케빈에게 이미지 요청하기]</b>를 누르면 이 저장소에 이미지 요청 이슈가 올라갑니다.
-        <b>요청 누르시면 케빈이 5분 이내에 자동 감지해서 이미지를 깃허브로 보내드립니다 (따로 톡 안 주셔도 됩니다!)</b></p>
+      <p class="hint">2단계에서 <b>[📤 케빈에게 이미지 요청하기]</b>를 누르면 이 저장소에 이미지 요청 이슈가 올라갑니다.
+        <b>요청 누르시면 케빈이 감지해서 이미지를 깃허브로 보내드립니다.</b></p>
       <div class="row">
         <input type="password" id="ghToken" placeholder="ghp_... (선택 · repo 권한 토큰을 넣으면 버튼 한 번에 이슈 자동 등록)" autocomplete="off">
-        <button class="btn" id="btnGhSave">저장</button>
-        <button class="btn ghost small" id="btnGhTest">연결 테스트</button>
+        <button class="btn" id="btnGhSave" type="button">저장</button>
+        <button class="btn ghost small" id="btnGhTest" type="button">연결 테스트</button>
       </div>
       <p class="hint small" id="ghMsg">저장소 profusive68-ship-it/sewol-story-studio · 라벨 image-request</p>
-      <details class="more">
-        <summary>토큰 없이도 됩니다 (1클릭 등록 화면)</summary>
-        <p>토큰이 없으면 깃허브 <b>새 이슈 작성 화면</b>이 제목·본문이 채워진 채로 열립니다. [Create]만 누르면 등록됩니다.
-          요청서 전문은 클립보드에도 함께 복사됩니다. 토큰을 넣으면 이 화면조차 필요 없이 버튼 한 번으로 이슈가 등록되고 주소가 표시됩니다.</p>
-        <p>토큰은 GitHub → Settings → Developer settings → Personal access tokens 에서 <b>Issues: Read and write</b> (classic 은 repo) 권한으로 만들 수 있습니다.
-          토큰은 이 맥북 안 <code>config.json</code> 에만 저장되고(권한 600), 화면에는 가려서 표시됩니다.</p>
-      </details>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2><span class="num">1</span> 사연과 포맷</h2></div>
-
-      <label class="label">사연 종류</label>
-      <div class="genre-grid" id="genreGrid"></div>
-
-      <label class="label" for="topic">주제·요청 (선택)</label>
-      <textarea id="topic" rows="2" placeholder="예) 제주 서귀포, 70대 어머니와 아들의 김치통 / 시댁 갈등 사이다 / 직접 쓰고 싶은 한 줄"></textarea>
-
-      <label class="label">영상 길이 · 비율</label>
-      <div class="preset-grid" id="presetGrid"></div>
-
-      <div class="option-row">
-        <label class="switch"><input type="checkbox" id="hook15" checked><span></span>
-          <div><b>첫 15초 반전 훅</b><small>0초부터 절정 장면으로 바로 진입 (인사·소개 없음)</small></div>
-        </label>
-      </div>
-
-      <div class="option-row">
-        <label class="switch"><input type="checkbox" id="sequel" checked><span></span>
-          <div><b>엔딩 예고 / 후속편 떡밥</b><small>마지막에 다음 사연 복선을 나레이션으로</small></div>
-        </label>
-      </div>
-
-      <div class="sub-box" id="teaserBox">
-        <label class="label">엔딩 예고 방식</label>
-        <select id="teaserMode">
-          <option value="auto_sequel">① 이번 사연의 6개월 뒤 후속편 복선 자동 생성</option>
-          <option value="next_story">② 다음에 올릴 사연 / 지난 인기 사연 후속편 예고 자동 추천</option>
-          <option value="manual">③ 직접 입력</option>
-        </select>
-        <textarea id="teaserText" rows="3" placeholder="직접 입력을 고르면 여기에 예고 멘트를 적어 주세요. (비우면 자동 생성)"></textarea>
-        <p class="hint small">예고 멘트 뒤에 구독·좋아요·지역 인사 나레이션이 자연스럽게 이어집니다.</p>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2><span class="num">2</span> 목소리 · 진행자 · 자막</h2></div>
-      <div class="two-col">
-        <div>
-          <label class="label" for="voiceMode">성우 배역</label>
-          <select id="voiceMode">
-            <option value="multi">다중 성우 라디오 드라마 (해설 + 노인 + 여성)</option>
-            <option value="male">단일 남성 낭독</option>
-            <option value="female">단일 여성 낭독</option>
-          </select>
-          <p class="hint small">무료 edge-tts 는 InJoon·SunHi 음성을, OpenAI 감성 TTS 는 같은 배역을
-            onyx(해설)·ash(노인)·sage(할머니)·coral(여성)·echo(청년)·nova(아이)로 자동 매핑합니다.</p>
-          <label class="label" for="rate">낭독 속도 <output id="rateOut">0%</output></label>
-          <input type="range" id="rate" min="-5" max="10" step="1" value="0">
-          <p class="hint small">-5%는 더 천천히, +10%는 더 빠르게. 시니어 사연은 0%를 권합니다.</p>
-        </div>
-        <div>
-          <label class="label">우측 하단 원형 진행자 · <b>290px</b> 라디오 DJ</label>
-          <label class="switch tight"><input type="checkbox" id="avatar" checked><span></span>
-            <div><b>진행자 아바타 표시</b><small>나레이션 성별에 맞는 남/여 스튜디오 DJ 또는 내 사진</small></div>
-          </label>
-          <div class="row">
-            <select id="avatarKind">
-              <option value="auto">자동 (나레이션 목소리 따라가기)</option>
-              <option value="female">여성 라디오 진행자</option>
-              <option value="male">남성 라디오 진행자</option>
-              <option value="custom">내 사진 사용</option>
-            </select>
-            <input type="file" id="avatarFile" accept="image/*" hidden>
-            <button class="btn ghost small" id="btnAvatarFile">사진 선택</button>
-          </div>
-          <label class="switch tight"><input type="checkbox" id="liveBadge" checked><span></span>
-            <div><b>● LIVE 표시</b><small>아바타 위 ON-AIR 배지 · 0.8초 붉은 점 점멸</small></div>
-          </label>
-          <p class="hint small">진행자는 6초마다 1.6초 동안 아주 살짝 숨쉬듯 움직입니다. 멈춘 사진처럼 보이지 않게.</p>
-          <label class="label">자막 크기</label>
-          <div class="seg" id="subSize">
-            <label><input type="radio" name="subSize" value="senior" checked><span>시니어 특대 (92px)</span></label>
-            <label><input type="radio" name="subSize" value="basic"><span>기본 (70px)</span></label>
-          </div>
-          <p class="hint small">자막은 10~14자에서 자동으로 줄바꿈됩니다.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2><span class="num">3</span> 참여 유도 (좋아요·구독)</h2></div>
-      <p class="hint">라디오처럼 듣는 사연이라 <b>화면 배너만으로는 눌리지 않습니다.</b> 해설자가 직접 말로 부탁합니다.</p>
-
-      <label class="switch"><input type="checkbox" id="likeVoice" checked><span></span>
-        <div><b>중반 좋아요 멘트 (음성)</b><small>전체의 약 55%, 반전 직전에 해설자가 1~2문장으로</small></div>
-      </label>
-      <textarea id="likeVoiceText" rows="2" placeholder="비우면 기본 멘트가 들어갑니다."></textarea>
-
-      <label class="switch"><input type="checkbox" id="likeBanner" checked><span></span>
-        <div><b>중반 좋아요 배너 (화면)</b><small>같은 시점에 우측 상단에 5초</small></div>
-      </label>
-
-      <label class="switch"><input type="checkbox" id="outroCta" checked><span></span>
-        <div><b>엔딩 구독·지역 인사 (음성)</b><small>후속편 예고 바로 뒤, 영상 맨 끝에서만</small></div>
-      </label>
-      <textarea id="ctaText" rows="3" placeholder="비우면 기본 멘트가 들어갑니다."></textarea>
-
-      <label class="switch"><input type="checkbox" id="endScreen" checked><span></span>
-        <div><b>마지막 10초 최종화면</b><small>구독 원형·다음 영상 카드 자리를 비워 둔 레이아웃</small></div>
-      </label>
-
-      <label class="switch"><input type="checkbox" id="sleepRain"><span></span>
-        <div><b>취침용 빗소리 엔딩</b><small>마지막 20~30초 잔잔한 빗소리로 서서히 사라지기</small></div>
-      </label>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2><span class="num">4</span> 이미지와 제작</h2></div>
-      <div class="mode-grid">
-        <label class="mode">
-          <input type="radio" name="imageMode" value="A">
-          <div><b>모드 A · 완전자동</b><span>Gemini가 대본 + 장면 이미지까지 만들어 바로 영상 완성</span>
-            <small>API 키 필요 · 이미지 생성은 유료 한도가 쓰입니다</small></div>
-        </label>
-        <label class="mode">
-          <input type="radio" name="imageMode" value="B" checked>
-          <div><b>모드 B · 0원 협업</b><span>대본 + 이미지 요청서를 만들고, 받아온 s01.png… 를 넣어 조립</span>
-            <small>이미지 생성 비용 0원 · 케빈에게 요청서를 그대로 보내면 됩니다</small></div>
-        </label>
-      </div>
-
-      <div class="make-row">
-        <button class="btn primary big" id="btnCreate">대본 + 이미지 요청서 만들기</button>
-        <span class="hint small" id="makeHint">모드 B: 요청서를 만든 뒤 images 폴더에 이미지를 넣고 [영상 조립]을 누릅니다.</span>
-      </div>
-      <p class="hint small">API 키가 없으면 예시 대본으로 만들어집니다. 대본은 [📖 대본 전체 읽기 / ✏️ 수정하기]에서 직접 고쳐
-        [🎬 수정한 대본으로 성우·영상 다시 만들기]로 바로 재제작할 수 있습니다.
-        완성까지 걸리는 시간은 50초 쇼츠 3~5분, 40분 본편 40~80분 정도입니다.</p>
     </section>
 
     <section class="card" id="ytCard">
       <div class="card-head">
-        <h2><span class="num">5</span> 유튜브 자동 업로드</h2>
+        <h2><span class="num">▶️</span> 유튜브 연결</h2>
         <span class="badge" id="ytBadge">확인 중</span>
       </div>
-      <p class="hint">영상이 완성되면 정한 시간에 맞춰 유튜브에 올리고, 예약 공개로 바꿔 둡니다.
-        제목·설명·썸네일까지 자동으로 들어갑니다.</p>
-
       <label class="label">① Google OAuth 파일 (client_secret.json)</label>
       <div class="row">
         <input type="file" id="ytSecret" accept=".json,application/json">
-        <button class="btn ghost small" id="btnYtSecret">올리기</button>
+        <button class="btn ghost small" id="btnYtSecret" type="button">올리기</button>
       </div>
       <p class="hint small" id="ytSecretMsg">아직 올리지 않았습니다.</p>
-
       <label class="label">② 채널 연동</label>
       <div class="row">
-        <button class="btn" id="btnYtConnect">유튜브 채널 연동 (구글 로그인)</button>
-        <button class="btn ghost small" id="btnYtDisconnect">연동 해제</button>
+        <button class="btn" id="btnYtConnect" type="button">유튜브 채널 연동 (구글 로그인)</button>
+        <button class="btn ghost small" id="btnYtDisconnect" type="button">연동 해제</button>
         <span class="chip" id="ytChannel">연결 안 됨</span>
       </div>
-
       <div class="two-col" style="margin-top:6px">
         <div>
-          <label class="label" for="ytPrivacy">공개 방식</label>
+          <label class="label" for="ytPrivacy">기본 공개 방식</label>
           <select id="ytPrivacy">
             <option value="scheduled">예약 공개 (비공개로 올린 뒤 정한 시각에 공개)</option>
             <option value="public">즉시 공개</option>
@@ -285,49 +547,37 @@
           <input type="datetime-local" id="ytPublishAt">
         </div>
       </div>
-
       <label class="label" for="ytTitleIndex">올릴 제목</label>
       <select id="ytTitleIndex">
         <option value="0">제목 1안 (사건 중심)</option>
         <option value="1">제목 2안 (감정 중심)</option>
         <option value="2">제목 3안 (반전 중심)</option>
       </select>
-
       <label class="switch"><input type="checkbox" id="ytAuto"><span></span>
-        <div><b>영상 완성 후 자동 업로드 실행</b><small>새로 만드는 사연부터 적용됩니다</small></div>
+        <div><b>영상 완성 후 자동 업로드</b><small>4단계에서 [즉시/예약]을 고른 것과 별개로, 렌더 완료 시 바로 올립니다</small></div>
       </label>
       <div class="row" style="margin-top:12px">
-        <button class="btn small" id="btnYtSave">업로드 설정 저장</button>
+        <button class="btn small" id="btnYtSave" type="button">업로드 설정 저장</button>
       </div>
-
       <details class="more">
         <summary>client_secret.json 무료 발급 5단계</summary>
         <ol class="tiny-list">
-          <li>console.cloud.google.com 접속 → 새 프로젝트 만들기 (이름 예: 세월의사연극장)</li>
+          <li>console.cloud.google.com 접속 → 새 프로젝트 만들기</li>
           <li>API 및 서비스 → 라이브러리 → <b>YouTube Data API v3</b> 검색 → 사용 설정</li>
-          <li>API 및 서비스 → OAuth 동의 화면 → 외부(External) → 앱 이름·이메일 입력 → 저장
-              → 테스트 사용자에 내 구글 계정 추가</li>
-          <li>사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID
-              → 애플리케이션 유형 <b>데스크톱 앱</b> → 만들기 → JSON 다운로드</li>
+          <li>API 및 서비스 → OAuth 동의 화면 → 외부(External) → 테스트 사용자에 내 구글 계정 추가</li>
+          <li>사용자 인증 정보 → OAuth 클라이언트 ID → <b>데스크톱 앱</b> → JSON 다운로드</li>
           <li>받은 파일 이름이 client_secret.json 인지 확인 → 위 ①에 올리기</li>
         </ol>
-        <p class="hint small"><b>정직한 안내:</b> 구글 심사를 받지 않은 ‘테스트(Testing)’ 상태의 앱에서는
-          YouTube 정책상 업로드된 영상이 <b>비공개로 고정</b>될 수 있습니다. 이 경우 예약 공개가 자동으로
-          풀리지 않습니다. 공개가 필요하면 Google Cloud 의 OAuth 동의 화면에서 앱을 ‘게시(Production)’하고
-          필요 시 구글 검증을 받아야 합니다. 검증 전에는 [비공개]로 올려 두고, 유튜브 스튜디오에서 직접
-          공개하는 방법이 가장 안전합니다.</p>
-        <p class="hint small">업로드 1회에 YouTube API 할당량 1,600이 쓰입니다. 기본 하루 10,000 →
-          하루 6편 정도입니다. 예약은 ‘지금 비공개 업로드 → 정한 시각에 자동 공개’ 방식입니다.</p>
+        <p class="hint small"><b>정직한 안내:</b> 구글 심사를 받지 않은 ‘테스트(Testing)’ 앱은 업로드된 영상이
+          <b>비공개로 고정</b>될 수 있습니다. 그때는 유튜브 스튜디오에서 직접 공개해 주세요.</p>
       </details>
     </section>
 
     <section class="card" id="strategyCard">
       <div class="card-head">
-        <h2><span class="num">📊</span> 채널 전략 분석과 원클릭 실행</h2>
-        <button class="btn small" id="btnStrategy">분석 시작</button>
+        <h2><span class="num">📊</span> 채널 전략 분석</h2>
+        <button class="btn small" id="btnStrategy" type="button">분석 시작</button>
       </div>
-      <p class="hint">연동된 채널의 업로드 시간·조회수·제목 패턴을 분석해 <b>다음에 무엇을, 언제 올릴지</b> 3가지로 제안합니다.
-        채널이 없으면 이 맥북의 제작 이력과 시니어 사연 벤치마크로 제안합니다.</p>
       <div id="strategyStatus" class="hint small">아직 분석하지 않았습니다.</div>
       <div id="strategyCards" class="strategy-list"></div>
     </section>
@@ -337,8 +587,6 @@
         <h2><span class="num">⏰</span> 자동 스케줄</h2>
         <span class="badge" id="schedBadge">꺼짐</span>
       </div>
-      <p class="hint">매일 정한 시각에 사연을 자동으로 만들고, 정한 시각에 공개되도록 예약합니다.
-        (이 대시보드가 켜져 있는 동안 동작 · 맥이 잠들면 멈춤)</p>
       <label class="switch"><input type="checkbox" id="schedAuto"><span></span>
         <div><b>매일 자동 실행</b><small>대시보드가 켜져 있으면 매일 아래 시각에 시작</small></div></label>
       <div class="two-col">
@@ -367,48 +615,38 @@
         <option value="A">모드 A — 이미지까지 자동 제작·업로드</option>
       </select>
       <div class="row" style="margin-top:12px">
-        <button class="btn small" id="btnSchedSave">스케줄 저장</button>
-        <button class="btn ghost small" id="btnSchedNow">지금 한 번 실행</button>
+        <button class="btn small" id="btnSchedSave" type="button">스케줄 저장</button>
+        <button class="btn ghost small" id="btnSchedNow" type="button">지금 한 번 실행</button>
       </div>
-      <p class="hint small" id="schedMsg">맥을 항상 켜두려면 아래 [잠자기 방지]를 켜세요.</p>
+      <p class="hint small" id="schedMsg">맥을 항상 켜두려면 [잠자기 방지]를 켜세요.</p>
     </section>
 
     <section class="card" id="remoteCard">
       <div class="card-head"><h2><span class="num">📱</span> 폰에서 접속하기</h2>
         <span class="badge" id="remoteBadge">확인 중</span></div>
-      <p class="hint">같은 와이파이(집)에서는 아래 주소를 그대로, 외출 중에는 무료 Tailscale 앱을 켜고
-        두 번째 주소를 쓰면 됩니다.</p>
       <div class="row">
         <input id="remoteLan" readonly>
-        <button class="btn small" data-copy-el="remoteLan">주소 복사</button>
+        <button class="btn small" data-copy-el="remoteLan" type="button">복사</button>
       </div>
       <div class="row" style="margin-top:8px">
         <input id="remoteTs" readonly placeholder="Tailscale 을 켜면 자동으로 표시됩니다">
-        <button class="btn small" data-copy-el="remoteTs">주소 복사</button>
+        <button class="btn small" data-copy-el="remoteTs" type="button">복사</button>
       </div>
       <div class="remote-grid">
         <div><img id="remoteQr" alt="폰 접속 QR" src=""><p class="hint small">아이폰 카메라로 QR 을 찍으면 바로 열립니다.</p></div>
         <div>
           <label class="label" for="remotePin">접속 비밀번호 (숫자 4~8자)</label>
           <div class="row"><input id="remotePin" inputmode="numeric" placeholder="비워두면 끔">
-            <button class="btn small" id="btnPinSave">저장</button></div>
-          <p class="hint small">비밀번호를 켜면 외부 접속 시 주소 뒤에 자동으로 붙습니다.</p>
+            <button class="btn small" id="btnPinSave" type="button">저장</button></div>
           <label class="switch"><input type="checkbox" id="caffeinate"><span></span>
             <div><b>잠자기 방지 (caffeinate)</b><small>화면만 꺼지고 서버는 계속 켜져 있습니다</small></div></label>
         </div>
       </div>
-      <details class="more">
-        <summary>집 / 외출 접속 방법 자세히</summary>
-        <p class="hint small"><b>집(같은 와이파이):</b> 맥과 폰을 같은 공유기에 연결 → 위 첫 번째 주소를 폰 브라우저에 입력.<br>
-          <b>외출:</b> 맥과 폰에 Tailscale(무료) 설치·같은 계정 로그인 → 맥에서 Tailscale 켜기 → 두 번째 주소 사용.<br>
-          <b>보안:</b> 접속 비밀번호를 꼭 켜 두세요. 공유기에서 외부 포트포워딩은 열지 마세요.</p>
-      </details>
     </section>
 
     <section class="card" id="commentsCard">
       <div class="card-head"><h2><span class="num">💬</span> 댓글 관리</h2>
-        <button class="btn small" id="btnComments">새로고침</button></div>
-      <p class="hint">최신 댓글을 불러오고, 시니어 눈높이의 따뜻한 답글 초안을 만들어 바로 등록합니다.</p>
+        <button class="btn small" id="btnComments" type="button">새로고침</button></div>
       <div id="commentList" class="comment-list"><p class="hint small">아직 불러오지 않았습니다.</p></div>
     </section>
 
@@ -417,67 +655,19 @@
         <span class="badge" id="inboxAutoBadge">자동 수신</span></div>
       <p class="hint">깃허브 저장소에서 새 버전과 이미지 묶음을 받아옵니다. 내 설정·프로젝트는 덮어쓰지 않습니다.</p>
       <div class="row">
-        <button class="btn small" id="btnUpdate">🔄 최신 버전 받아오기</button>
-        <button class="btn ghost small" id="btnInboxCheck">지금 이미지 확인</button>
+        <button class="btn small" id="btnUpdate" type="button">🔄 최신 버전 받아오기</button>
+        <button class="btn ghost small" id="btnInboxCheck2" type="button">지금 이미지 확인</button>
         <span class="hint small" id="updateMsg">깃허브 연결 확인 중…</span>
       </div>
       <label class="switch"><input type="checkbox" id="autoAssemble"><span></span>
-        <div><b>이미지가 다 모이면 자동으로 영상 조립</b><small>받은 이미지로 남은 장수가 0이 되면 바로 조립을 시작합니다 (렌더링이 오래 걸립니다)</small></div></label>
+        <div><b>이미지가 다 모이면 자동으로 영상 조립</b><small>받은 이미지로 남은 장수가 0이 되면 바로 조립을 시작합니다</small></div></label>
       <p class="hint small" id="autoInboxDetail">20초마다 깃허브를 확인합니다.</p>
       <div id="inboxEvents" class="inbox-list"></div>
       <div id="inboxList" class="inbox-list"></div>
     </section>
+
   </div>
-
-  <aside class="col-side">
-    <section class="card job" id="jobPanel" hidden>
-      <div class="card-head">
-        <h2 id="jobTitle">작업 진행</h2>
-        <span class="badge" id="jobBadge">대기</span>
-      </div>
-      <div class="steps" id="jobSteps">
-        <div class="step" data-step="1"><b>1/6</b><span>대본</span></div>
-        <div class="step" data-step="2"><b>2/6</b><span>이미지</span></div>
-        <div class="step" data-step="3"><b>3/6</b><span>성우·발음</span></div>
-        <div class="step" data-step="4"><b>4/6</b><span>BGM·SFX</span></div>
-        <div class="step" data-step="5"><b>5/6</b><span>영상 렌더링</span></div>
-        <div class="step" data-step="6"><b>6/6</b><span>썸네일·카피</span></div>
-      </div>
-      <div class="bar"><div id="jobBar"></div></div>
-      <p class="job-msg" id="jobMsg">—</p>
-      <details class="more" id="jobLogWrap"><summary>진행 기록</summary><pre id="jobLog"></pre></details>
-      <div id="jobResult" class="result-links"></div>
-      <div id="jobExtra"></div>
-    </section>
-
-    <section class="card" id="detailPanel" hidden></section>
-
-    <section class="card">
-      <div class="card-head"><h2>내 사연들</h2><button class="btn ghost small" id="btnRefresh">새로고침</button></div>
-      <div id="projectList" class="project-list"><p class="hint">아직 만든 사연이 없습니다.</p></div>
-    </section>
-
-    <section class="card weekend" id="weekendCard" hidden>
-      <div class="card-head"><h2>주말 2시간 몰아듣기</h2></div>
-      <p class="hint">완성된 사연 2~3개를 골라 하나로 잇습니다.</p>
-      <div id="weekendProjects" class="weekend-list"></div>
-      <input id="weekendTitle" placeholder="합본 제목 (비우면 자동)">
-      <button class="btn primary" id="btnCompile">합본 만들기</button>
-    </section>
-
-    <section class="card help">
-      <div class="card-head"><h2>사용 순서</h2></div>
-      <ol>
-        <li>Gemini 키 저장 (모드 A·대본 자동에 필요)</li>
-        <li>사연 종류·길이·목소리 고르기</li>
-        <li><b>대본 + 이미지 요청서 만들기</b></li>
-        <li>모드 B면 이미지를 <code>images/</code>에 넣고 업로드</li>
-        <li><b>영상 조립</b> → 영상·썸네일 2종·업로드 카피 완성</li>
-      </ol>
-      <p class="hint small">폴더: <code>projects/사연번호/</code> · 결과물은 <code>output/</code> 안에 있습니다.</p>
-    </section>
-  </aside>
-</main>
+</div>
 
 <div id="toast" class="toast" hidden></div>
 <script src="/static/app.js"></script>

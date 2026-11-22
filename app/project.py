@@ -11,7 +11,8 @@ from .gemini_script import (ENGINE_LABELS, SPEAKERS, SFX_VOCAB, candidate_engine
                             generate_script, no_engine_message, normalize_script)
 from .paths import project_dir
 from .script_templates import build_template_script
-from .settings import (FORMAT_PRESETS, GENRES, SPEAKER_LABELS, SUBTITLE_SIZES, load_config)
+from .settings import (FORMAT_PRESETS, GENRES, SPEAKER_LABELS, STORY_TONES, SUBTITLE_SIZES,
+                       load_config)
 
 SCHEMA = "sewol-project/1"
 CHARS_PER_SEC = 4.3
@@ -122,6 +123,7 @@ def create_project(payload: dict, progress=None) -> dict:
         "hook15": bool(payload.get("hook15", True)),
         "sequel": bool(payload.get("sequel", True)),
         "voice_mode": payload.get("voice_mode") or "multi",
+        "tone": payload.get("tone") or "warm",
         "rate": max(-5, min(10, int(payload.get("rate") or 0))),
         "subtitle_size": payload.get("subtitle_size") or "senior",
         "avatar": bool(payload.get("avatar", True)),
@@ -146,6 +148,8 @@ def create_project(payload: dict, progress=None) -> dict:
     }
     if settings["voice_mode"] not in ("multi", "male", "female"):
         settings["voice_mode"] = "multi"
+    if settings["tone"] not in STORY_TONES:
+        settings["tone"] = "warm"
     if settings["teaser_mode"] not in ("auto_sequel", "next_story", "manual"):
         settings["teaser_mode"] = "auto_sequel"
 
@@ -235,7 +239,13 @@ def create_project(payload: dict, progress=None) -> dict:
         "status": {"stage": "created", "percent": 0, "message": "대본과 이미지 요청서가 준비되었습니다.", "updated": now()},
         "outputs": {},
         "timeline": [],
+        "publish": {"decision": "undecided", "updated": ""},
     }
+    try:                     # 해설·인물 목소리 분리표를 처음부터 확정해 둔다
+        from .tts import build_voice_plan
+        build_voice_plan(project)
+    except Exception:
+        pass
     if project.get("source") == "template" and float(fmt["target"]) >= 600:
         warnings.append("예시 대본은 실제 목표 길이보다 짧습니다. Gemini 또는 OpenAI API 키를 저장하면 목표 길이에 맞춰 생성됩니다.")
         project["warnings"] = warnings
@@ -410,7 +420,9 @@ def play_order(project: dict) -> list[tuple[dict, str]]:
     return ordered
 
 
-GAPS = {"hook": 0.10, "rewind": 0.30, "body": 0.22, "mid": 1.35, "teaser": 1.4, "end": 1.0}
+# 장면 사이 간격 — 본문 대사는 어느 화자든 같은 0.32초 호흡 간격으로 잇는다(v2.0.0)
+# 훅/되돌리기/중간 멘트/예고/엔딩의 큰 간격은 연출용이며 여기서만 다르다.
+GAPS = {"hook": 0.12, "rewind": 0.30, "body": 0.32, "mid": 1.35, "teaser": 1.4, "end": 1.0}
 
 
 def _layout(order: list[tuple[dict, str]], durations: dict[str, float]) -> tuple[list[dict], float]:

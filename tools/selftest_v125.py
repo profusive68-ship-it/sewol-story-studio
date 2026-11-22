@@ -123,8 +123,9 @@ def main() -> int:
     print("== 1. 버전 · 문서 ==")
     disk = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     init_src = (ROOT / "app" / "__init__.py").read_text(encoding="utf-8")
-    check("VERSION == 1.2.5", disk == "1.2.5", disk)
-    check("app.__version__ == 1.2.5", '"1.2.5"' in init_src, init_src.strip().splitlines()[-1])
+    ver_tuple = tuple(int(x) for x in disk.split(".") if x.isdigit())
+    check("VERSION 이 1.2.5 이상", ver_tuple >= (1, 2, 5), disk)
+    check("app.__version__ 가 VERSION 과 같다", f'"{disk}"' in init_src, init_src.strip().splitlines()[-1])
     readme = (ROOT / "README_맥북설치방법.txt").read_text(encoding="utf-8")
     check("설명서 머리말 버전 일치", f"(v{disk})" in readme.splitlines()[1], readme.splitlines()[1])
     check("설명서에 신규 기능 안내", "OpenAI 자동 보조" in readme and "대본 전체" in readme)
@@ -174,7 +175,7 @@ def main() -> int:
     from app.project import create_project, load, read_script_view, save_edited_script  # noqa: E402
     from app.settings import load_config, public_config, save_config  # noqa: E402
 
-    check("임시 사본 버전 일치", pkg_version == "1.2.5", pkg_version)
+    check("임시 사본 버전 일치", pkg_version == disk, f"{pkg_version} / {disk}")
 
     print("== 4. OpenAI 호출(가짜 HTTP) ==")
     payload = oai.build_payload({"openai_script_model": "gpt-4o-mini"}, "프롬프트", temperature=0.7,

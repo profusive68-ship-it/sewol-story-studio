@@ -123,7 +123,9 @@ def main() -> int:
     from app.settings import AVATAR_KINDS
     check("avatar_kind 기본 'auto'", AVATAR_KINDS.get("auto") is not None, str(AVATAR_KINDS))
     v, i = tts.openai_cast("son", "multi", "40대 후반", "male", "서운한 아들", "conflict")
-    check("40대 남성 → onyx", v == "onyx", v)
+    # v2.0.0 — 해설(onyx)과 대화 인물은 같은 voice 를 쓰지 않는다 → 40대 남성은 echo
+    check("40대 남성 → echo (해설 onyx 와 분리)", v == "echo", v)
+    check("해설과 다른 목소리", v != tts.openai_narrator_voice("multi"), v)
     check("인물 지시문에 나이 반영", "40대 후반" in i and "성별" in i, i[:80])
     v2, i2 = tts.openai_cast("mother", "multi", "70대 후반", "female",
                              "다정하지만 기력이 약한 병상의 노모", "heal")
@@ -133,7 +135,9 @@ def main() -> int:
     check("냉정한 인물 → ash", v3 == "ash", v3)
     check("별명 화자는 인물 지시문(청년 지시문 아님)", "라디오 드라마의 등장인물" in i3, i3[:60])
     v4, _ = tts.openai_cast("daughter", "multi", "20대", "여성", "울먹이며 참는 딸", "conflict")
-    check("20대 여성 → coral", v4 == "coral", v4)
+    # v2.0.0 — 젊은 여성(며느리·딸)은 nova/shimmer 계열로 분리한다
+    check("20대 여성 → shimmer", v4 == "shimmer", v4)
+    check("젊은 여성도 해설과 분리", v4 != tts.openai_narrator_voice("multi"), v4)
     v5, i5 = tts.openai_cast("child", "multi", "8세", "male", "밝은 초등학생", "heal")
     check("8세 → verse", v5 == "verse", v5)
     check("공식 보이스 범위 안", all(x in tts.OPENAI_VOICES for x in
@@ -150,7 +154,11 @@ def main() -> int:
     check("edge 70대 여성 → SunHi + 낮은 피치", ev == "ko-KR-SunHiNeural" and int(ep[:-2]) <= -10,
           f"{ev} {ep}")
     ev2, ep2, er2 = tts.edge_cast("son", "multi", 0, "40대", "male", "")
-    check("edge 40대 남성 → InJoon", ev2 == "ko-KR-InJoonNeural", f"{ev2} {ep2}")
+    # v2.0.0 — 해설 InJoon 과 겹치지 않게 남성 인물은 Hyunsu 로 배정한다
+    check("edge 40대 남성 → Hyunsu (해설 InJoon 과 분리)", ev2 == "ko-KR-HyunsuMultilingualNeural",
+          f"{ev2} {ep2}")
+    check("edge 해설과 다른 음성", ev2 != tts.edge_narrator_voice("multi"), ev2)
+    check("edge 속도 균일(±3%)", er2 == 0 and abs(er2) <= 3, str(er2))
     ev3, ep3, er3 = tts.edge_cast("narrator", "multi", 0)
     check("edge 메타 없음 → 기존 배역값", (ev3, ep3, er3) ==
           tts._role_cfg("narrator", "multi", 0), f"{ev3} {ep3} {er3}")

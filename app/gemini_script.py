@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 from . import openai_script as oai
 from .honorifics import harmonize_script
-from .settings import GENRES, FORMAT_PRESETS
+from .settings import GENRES, FORMAT_PRESETS, STORY_TONES
 
 SFX_VOCAB = ["문 쾅", "문 닫기", "문 삽입", "문 삐걱", "찻잔", "숟가락", "한숨",
              "심장박동", "발자국", "비", "바람", "바람 창", "새소리", "종", "전화벨",
@@ -367,6 +367,13 @@ def no_engine_message(cfg: dict) -> str:
 
 
 # ── 1단계: 설계 ────────────────────────────────────────────────────────────
+def _tone_line(settings: dict) -> str:
+    """전체 톤(따뜻한/담담한/처절한/통쾌한)을 프롬프트 한 줄로."""
+    key = str((settings or {}).get("tone") or "warm")
+    label = STORY_TONES.get(key, STORY_TONES["warm"])
+    return f"- 전체 톤: {label} — 해설과 인물 대사의 말투·호흡, 장면 감정선에 이 톤을 끝까지 유지한다."
+
+
 def _design_prompt(settings: dict, n_acts: int, n_chapters: int) -> str:
     target = float(settings["target_seconds"])
     chars = int(target * 4.3)
@@ -377,6 +384,7 @@ def _design_prompt(settings: dict, n_acts: int, n_chapters: int) -> str:
 
 - 사연 종류: {genre['label']} — {genre['hint']}
 - 직접 적은 주제: {topic}
+{_tone_line(settings)}
 - 형식: {fmt['label']} · {fmt['aspect']} · 약 {int(target)}초(약 {chars}자)
 - 막 구성: {n_acts}막 / 장 구성: {n_chapters}장
 - 첫 15초 반전 훅: 반드시 켠다.
@@ -483,6 +491,7 @@ def _short_design_prompt(settings: dict) -> str:
 
 - 사연 종류: {genre['label']} — {genre['hint']}
 - 주제: {topic}
+{_tone_line(settings)}
 - 0초 콜드 오픈: 가장 충격적인 대사·사건 한복판에서 시작(인사·소개 금지). 첫 15초 안에 반전의 실마리.
 - 호칭 통일: 이 편에서 같은 사람은 한 표현으로만 부른다(제목·썸네일·대사 모두 '엄마'면 '엄마', '어머니'를 섞지 않는다).
 

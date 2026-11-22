@@ -29,7 +29,7 @@ from .gemini_script import SYSTEM_RULES, engine_tag
 from .paths import (ASSETS_DIR, BASE, PROJECTS_DIR, STATIC_DIR, ensure_dirs,
                     project_dir)
 from .project import (CTA_SHORT, CTA_TEXT, LIKE_VOICE_SHORT, LIKE_VOICE_TEXT, build_timeline,
-                      create_project, list_projects, load, missing_images, now,
+                      build_upload_pack, create_project, list_projects, load, missing_images, now,
                       read_script_view, save_edited_script, save, set_status,
                       write_image_request, write_upload_copy)
 from .pronunciation import ensure_pron_file
@@ -38,9 +38,15 @@ from .settings import (AVATAR_GENDERS, AVATAR_KINDS, AVATAR_SIZE_PX, DEFAULT_GIT
                        FORMAT_PRESETS, GENRES, LIVE_BADGE_DEFAULT, LIVE_BADGE_PERIOD,
                        AVATAR_MOTION_CYCLE, AVATAR_MOTION_SECONDS, OPENAI_SCRIPT_MODELS,
                        OPENAI_TTS_MODELS, SCRIPT_ENGINES,
-                       SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, load_config, public_config,
-                       save_config)
-from .tts import preview_path, synthesize_sync, test_openai_tts, voice_report
+                       SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, STORY_TONES, load_config, public_config,
+                       save_config,
+                       BREATH_GAP_MAX, BREATH_GAP_MIN, BREATH_GAP_SECONDS, NARRATION_SPEED,
+                       SPEED_TOLERANCE)
+from .tts import (breath_gap, build_voice_plan, clip_path, preview_dir, preview_path,
+                  project_voice_plan, separation_violations, speed_values,
+                  synthesize_line_preview, synthesize_sync, test_openai_tts, voice_report,
+                  write_voice_meta)
+from .suggest import suggest_ideas
 from . import youtube_upload as yt
 from . import strategy as st
 from . import comments as cm
@@ -118,7 +124,7 @@ def start_job(kind: str, fn, *args, project_id: str | None = None) -> str:
                      "message": "시작하는 중…", "project_id": project_id,
                      "started": now(), "log": [], "result": None, "error": None}
 
-    def progress(pct: int, msg: str, step: int | None = None) -> None:
+    def progress(pct: int, msg: str, step: int | None = None, stages: dict | None = None) -> None:
         with JOBS_LOCK:
             j = JOBS.get(jid)
             if not j:
@@ -128,6 +134,8 @@ def start_job(kind: str, fn, *args, project_id: str | None = None) -> str:
             if step:
                 j["step"] = int(step)
                 j["step_label"] = STEP_LABELS.get(int(step), "")
+            if stages:
+                j["stages"] = {str(k): int(v) for k, v in dict(stages).items()}
             log = j.setdefault("log", [])
             if not log or log[-1] != msg:
                 log.append(msg)
@@ -183,6 +191,7 @@ def meta():
         "genres": [{"key": k, **v} for k, v in GENRES.items()],
         "presets": [{"key": k, **v} for k, v in FORMAT_PRESETS.items()],
         "voice_modes": VOICE_MODES,
+        "story_tones": STORY_TONES,
         "tts_engines": TTS_ENGINES,
         "openai_tts_models": OPENAI_TTS_MODELS,
         "script_engines": SCRIPT_ENGINES,
@@ -201,6 +210,17 @@ def meta():
             "like_voice_short": LIKE_VOICE_SHORT,
             "cta_text": CTA_TEXT,
             "cta_short": CTA_SHORT,
+        },
+        "studio_steps": [
+            {"n": 1, "key": "script", "label": "대본 설계·검토", "icon": "✍️"},
+            {"n": 2, "key": "media", "label": "이미지·음성 검토", "icon": "🎧"},
+            {"n": 3, "key": "render", "label": "영상 렌더링", "icon": "🎬"},
+            {"n": 4, "key": "final", "label": "최종 확인·업로드", "icon": "🚀"},
+        ],
+        "voice_standard": {
+            "speed": NARRATION_SPEED, "tolerance": SPEED_TOLERANCE,
+            "breath_gap": BREATH_GAP_SECONDS, "min": BREATH_GAP_MIN, "max": BREATH_GAP_MAX,
+            "openai_voices": list(OPENAI_TTS_MODELS.keys()),
         },
     }
 
@@ -300,6 +320,7 @@ class CreateIn(BaseModel):
     teaser_mode: str = "auto_sequel"
     teaser_text: str = ""
     voice_mode: str = "multi"
+    tone: str = "warm"
     rate: int = 0
     avatar: bool = True
     avatar_kind: str = "auto"
@@ -410,6 +431,364 @@ def rebuild_project_script(pid: str):
     return {"job": start_job("rescript", work, project_id=pid)}
 
 
+# ── v2.0.0 4단계 스튜디오 API ────────────────────────────────────────────
+class SuggestIn(BaseModel):
+    genre: str = "tear_family"
+    preset: str = "short50"
+    count: int = 5
+
+
+@app.post("/api/scenario/suggest")
+def scenario_suggest(body: SuggestIn | None = None):
+    """1단계 [✨ 시나리오 추천받기] — AI가 주제·훅 3~5개를 추천한다."""
+    body = body or SuggestIn()
+    settings_in = {"genre": body.genre or "tear_family", "preset": body.preset or "short50"}
+    try:
+        return suggest_ideas(settings_in, load_config(), count=body.count)
+    except Exception as e:
+        return {"ok": False, "ideas": [], "error": str(e)[:300]}
+
+
+def _project_brief(p: dict) -> dict:
+    """스튜디오 화면(4단계)이 쓰는 요약 — 상세 JSON 전체를 보내지 않는다."""
+    plan = p.get("image_plan") or []
+    have = _image_files(p["id"])
+    return {
+        "id": p.get("id"), "title": p.get("title"), "status": p.get("status") or {},
+        "format": p.get("format") or {}, "options": p.get("options") or {},
+        "outputs": p.get("outputs") or {}, "duration": p.get("duration"),
+        "script_rev": p.get("script_rev", 0), "script_dirty": bool(p.get("script_dirty")),
+        "script_engine": p.get("script_engine") or p.get("source") or "",
+        "script_editor": p.get("script_editor") or p.get("script_engine") or p.get("source") or "",
+        "script_engine_tag": engine_tag(p.get("script_engine") or p.get("source") or ""),
+        "warnings": list(p.get("warnings") or [])[-6:],
+        "publish": p.get("publish") or {"decision": "undecided"},
+        "youtube": p.get("youtube") or {},
+        "images": {"total": len(plan), "found": len([f for f in have if f in {e.get('file') for e in plan}]),
+                   "files": have, "missing": missing_images(p)},
+        "scenes": len(p.get("scenes") or []),
+        "receive_log": (p.get("receive_log") or [])[-1:],
+    }
+
+
+@app.get("/api/projects/{pid}/studio")
+def project_studio(pid: str):
+    """4단계 위자드가 한 번에 읽는 상태 묶음(대본 · 이미지 · 성우 · 수신 · 업로드 카피)."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    plan = project_voice_plan(p)
+    before = json.dumps(p.get("upload_pack") or {}, ensure_ascii=False, sort_keys=True)
+    pack = build_upload_pack(p)
+    after = json.dumps(pack, ensure_ascii=False, sort_keys=True)
+    if before != after:          # 화면이 4초마다 부르므로 바뀔 때만 저장(디스크 낭비 방지)
+        try:
+            save(p)
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "project": _project_brief(p),
+        "pack": pack,
+        "voices": {"plan": plan, "report": voice_report(p),
+                   "violations": separation_violations(plan),
+                   "speeds": speed_values(plan),
+                   "speed_uniform": (max(speed_values(plan)) - min(speed_values(plan))) <= 0.0001,
+                   "breath_gap": breath_gap()},
+        "receive": ib.project_progress(pid),
+    }
+
+
+@app.get("/api/projects/{pid}/voices")
+def project_voices(pid: str):
+    """해설/인물 목소리 분리·속도 균일 검사 결과(2단계 화면·테스트용)."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    plan = project_voice_plan(p)
+    speeds = speed_values(plan)
+    return {"ok": True, "report": voice_report(p), "plan": plan,
+            "violations": separation_violations(plan),
+            "separated": not separation_violations(plan),
+            "speeds": speeds,
+            "speed_uniform": (max(speeds) - min(speeds)) <= 0.0001,
+            "breath_gap": breath_gap()}
+
+
+@app.post("/api/projects/{pid}/tts")
+def project_tts(pid: str):
+    """2단계 [성우 음성 만들기] — 대본 전체를 성우(목소리 표)로 녹음한다."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    if not (p.get("scenes") or []):
+        raise HTTPException(400, "이 사연에는 대본이 없습니다.")
+
+    def work(progress):
+        return _tts_stage(pid, progress)
+
+    return {"job": start_job("tts", work, project_id=pid)}
+
+
+def _tts_stage(pid: str, progress, base_pct: int = 0, span: int = 100) -> dict:
+    p = load(pid)
+    set_status(p, "tts", 30, "성우 녹음 준비 중…")
+    plan = build_voice_plan(p)
+    save(p)
+    progress(base_pct + int(span * 0.03), f"성우 {len(plan.get('speakers') or {})}명 배정…", 3)
+
+    def on_line(i, n):
+        progress(base_pct + int(span * (0.05 + 0.9 * i / max(1, n))), f"성우 녹음 {i}/{n}", 3)
+
+    durations = synthesize_sync(p, progress=on_line)
+    items = build_timeline(p, durations)
+    save(p)
+    write_voice_meta(p)
+    set_status(p, "tts", max(30, base_pct + span),
+               f"성우 녹음 완료 — 장면 {len(durations)}개 · 약 {round(p.get('duration') or 0)}초")
+    progress(base_pct + span, "성우 녹음 완료", 3)
+    return {"project_id": pid, "lines": len(durations),
+            "seconds": round(sum(v for v in durations.values() if v), 1),
+            "duration": p.get("duration"), "plan": plan, "timeline": len(items)}
+
+
+@app.get("/api/projects/{pid}/tts/{name}")
+def project_tts_audio(pid: str, name: str):
+    """2단계 미리듣기 — 장면 음성(`s03`)과 재녹음 파일(`preview/s03`)을 내보낸다."""
+    _check_pid(pid)
+    base = re.sub(r"\.mp3$", "", (name or "").strip())
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{1,40}", base):
+        raise HTTPException(400, "잘못된 음성 이름입니다.")
+    candidates = [preview_dir(pid) / f"{base}.mp3", clip_path(pid, base)]
+    for path in candidates:
+        if path.exists() and path.stat().st_size > 500:
+            return FileResponse(str(path), media_type="audio/mpeg",
+                                headers={"Cache-Control": "no-cache, max-age=0, must-revalidate"})
+    raise HTTPException(404, "아직 음성이 없습니다. [성우 음성 만들기]를 먼저 눌러 주세요.")
+
+
+class TtsPreviewIn(BaseModel):
+    scene_id: str
+    text: str | None = None
+    speaker: str | None = None
+    emotion: str | None = None
+    save: bool = False       # 고친 대사를 대본에 저장할지
+    commit: bool = False     # 이 음성을 본 렌더에 쓸 audio_clips 로 고정할지
+
+
+@app.post("/api/projects/{pid}/tts/preview")
+def project_tts_preview(pid: str, body: TtsPreviewIn):
+    """2단계 개별 대사 미리듣기·재녹음 (대사·화자를 바꿔 바로 들어볼 수 있다)."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    scenes = [dict(s) for s in (p.get("scenes") or [])]
+    target = next((s for s in scenes if str(s.get("id")) == str(body.scene_id)), None)
+    if not target:
+        raise HTTPException(404, "그 장면을 찾을 수 없습니다.")
+    changed = False
+    if body.text is not None and str(body.text).strip() != str(target.get("text") or "").strip():
+        target["text"] = str(body.text).strip()[:600]
+        changed = True
+    if body.speaker and str(body.speaker) != str(target.get("speaker")):
+        target["speaker"] = str(body.speaker)
+        changed = True
+    if body.emotion and str(body.emotion) != str(target.get("emotion")):
+        target["emotion"] = str(body.emotion)
+        changed = True
+    try:
+        info = synthesize_line_preview(p, target, text=target.get("text") or "",
+                                       name=f"{target.get('id')}")
+    except Exception as e:
+        raise HTTPException(400, f"음성을 만들지 못했습니다: {str(e)[:200]}")
+    saved = False
+    if body.save and changed:
+        rows = [{"id": s.get("id"), "text": s.get("text"), "speaker": s.get("speaker"),
+                 "emotion": s.get("emotion")} for s in scenes]
+        try:
+            save_edited_script(p, rows)
+            saved = True
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if body.commit:
+        src = preview_dir(pid) / f"{target.get('id')}.mp3"
+        dst = clip_path(pid, str(target.get("id")))
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        p = _load_or_404(pid)
+        try:
+            from .ffmpeg_util import duration as _dur
+            all_d = {}
+            for sc in p.get("scenes") or []:
+                f = clip_path(pid, str(sc.get("id")))
+                if f.exists():
+                    try:
+                        all_d[sc["id"]] = _dur(f)
+                    except Exception:
+                        all_d[sc["id"]] = 0.0
+            build_timeline(p, all_d)
+        except Exception:
+            pass
+        save(p)
+    return {"ok": True, "scene_id": target.get("id"),
+            "url": f"/api/projects/{pid}/tts/{target.get('id')}?v={int(uuid.uuid4().int % 100000)}",
+            "seconds": info.get("seconds"), "voice": info.get("voice"),
+            "label": info.get("label"), "speed": info.get("speed"),
+            "engine": info.get("engine"), "changed": changed, "saved": saved,
+            "committed": bool(body.commit), "text": target.get("text")}
+
+
+class RenderIn(BaseModel):
+    remix: bool = True          # BGM·자막을 새로 만들지
+
+
+@app.post("/api/projects/{pid}/render")
+def project_render(pid: str, body: RenderIn | None = None):
+    """3단계 [영상 렌더링] — 성우/BGM/자막/인코딩 단계별 진행률과 함께 final.mp4 를 만든다."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    missing = missing_images(p)
+    if missing:
+        raise HTTPException(400, f"이미지 {len(missing)}장이 아직 없습니다: {', '.join(missing[:6])}")
+    if not (p.get("scenes") or []):
+        raise HTTPException(400, "이 사연에는 대본이 없습니다.")
+
+    def work(progress):
+        return render_project(pid, progress)
+
+    return {"job": start_job("render", work, project_id=pid)}
+
+
+def render_project(pid: str, progress) -> dict:
+    """성우 → 타임라인 → BGM·효과음 → 자막 → 인코딩 → 썸네일·카피.
+
+    각 단계 진행률을 `stages` 로 함께 보내 3단계 화면이 네 개 막대로 보여 준다.
+    """
+    stages = {"성우": 0, "BGM": 0, "자막": 0, "인코딩": 0}
+
+    def report(name: str, pct: int, msg: str, total: int, step: int = 5) -> None:
+        stages[name] = max(stages.get(name, 0), max(0, min(100, int(pct))))
+        progress(max(0, min(100, int(total))), msg, step, stages=dict(stages))
+
+    p = load(pid)
+    # 1) 성우 — 이미 만든 음성은 그대로 쓰고 빠진 것만 녹음한다
+    report("성우", 2, "성우 음성 확인 중…", 2)
+    clips = [clip_path(pid, str(s.get("id"))) for s in p.get("scenes") or []]
+    missing_lines = [c for c in clips if not (c.exists() and c.stat().st_size > 500)]
+    if missing_lines:
+        report("성우", 10, f"성우 {len(missing_lines)}개 대사 새로 녹음…", 6)
+        _tts_stage(pid, lambda pct, msg, step=None, **kw: report(
+            "성우", 10 + int(0.85 * (pct if isinstance(pct, int) else 0)), msg, 6 + int(pct * 0.09), 3),
+            base_pct=0, span=100)
+        p = load(pid)
+    report("성우", 100, "성우 음성 준비 완료", 16)
+
+    from .ffmpeg_util import duration as _dur
+    from .project import est_seconds
+    durations = {}
+    for sc in p.get("scenes") or []:
+        f = clip_path(pid, str(sc.get("id")))
+        sec = 0.0
+        try:
+            sec = _dur(f) if f.exists() else 0.0
+        except Exception:
+            sec = 0.0
+        durations[sc["id"]] = sec if sec and sec > 0.05 else est_seconds(str(sc.get("text") or ""))
+    items = build_timeline(p, durations)
+    save(p)
+
+    # 2) BGM · 효과음
+    report("BGM", 5, "감정별 BGM·효과음 믹싱…", 20)
+    mix = build_mix(p, items, progress=lambda q, m: report("BGM", 5 + int(0.95 * q), m, 20 + int(q * 0.14)))
+    p.setdefault("outputs", {})["audio"] = str(mix.relative_to(project_dir(pid)))
+    save(p)
+    report("BGM", 100, "BGM·효과음 완료", 34)
+
+    # 3) 자막 (SRT 는 화면·업로드용, ASS 는 인코딩 단계에서 다시 만든다)
+    report("자막", 20, "자막 파일 만드는 중…", 36)
+    try:
+        from .project import scale_for
+        from .subtitles import write_ass, write_srt
+        w, h = scale_for(p)
+        write_srt(p, items, project_dir(pid) / "output" / "subtitles.srt")
+        (project_dir(pid) / "render").mkdir(parents=True, exist_ok=True)
+        write_ass(p, items, project_dir(pid) / "render" / "subs.ass", w, h)
+        p["outputs"]["srt"] = "output/subtitles.srt"
+        save(p)
+    except Exception as e:
+        p.setdefault("warnings", []).append(f"자막 파일 생성 경고: {str(e)[:120]}")
+        save(p)
+    report("자막", 100, "자막 완료", 42)
+
+    # 4) 인코딩
+    report("인코딩", 2, "영상 조립 중…", 44)
+    video = render_video(p, items, mix, progress=lambda q, m: report(
+        "인코딩", 2 + int(0.98 * q), m, 44 + int(q * 0.5)))
+    p["outputs"]["video"] = str(video.relative_to(project_dir(pid)))
+    save(p)
+    report("인코딩", 100, "영상 인코딩 완료", 94)
+
+    # 5) 썸네일·업로드 카피
+    progress(95, "썸네일 2종 만드는 중…", 6, stages=dict(stages))
+    try:
+        th = render_thumbnails(p, progress=lambda q, m: progress(95 + int(3 * q / 100), m, 6,
+                                                                 stages=dict(stages)))
+        p["outputs"]["thumb_style1"] = str(Path(th["style1"]).relative_to(project_dir(pid)))
+        p["outputs"]["thumb_style2"] = str(Path(th["style2"]).relative_to(project_dir(pid)))
+    except Exception as e:
+        p.setdefault("warnings", []).append(f"썸네일 생성 실패: {str(e)[:140]}")
+    save(p)
+    write_image_request(p)
+    write_upload_copy(p)
+    set_status(p, "done", 99, "영상·썸네일·업로드 카피가 준비되었습니다. 4단계에서 감수하세요.")
+    progress(100, "완성 — 4단계에서 확인하세요", 6, stages=dict(stages))
+    return {"project_id": pid, "video": p["outputs"].get("video"),
+            "duration": p.get("duration"), "stages": stages,
+            "thumb1": p["outputs"].get("thumb_style1"),
+            "thumb2": p["outputs"].get("thumb_style2")}
+
+
+class PublishIn(BaseModel):
+    decision: str = "hold"          # now(지금 공개) | schedule(예약) | hold(보류·파일만)
+    privacy: str = ""               # now 일 때 public/unlisted/private
+    publish_at: str = ""            # schedule 일 때 YYYY-MM-DDTHH:MM
+    title_index: int = 0
+
+
+@app.post("/api/projects/{pid}/publish")
+def project_publish(pid: str, body: PublishIn):
+    """4단계 최종 결정 — 지금 업로드 / 예약 업로드 / 보류하고 파일만 저장."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    decision = (body.decision or "hold").strip().lower()
+    if decision not in ("now", "schedule", "hold"):
+        decision = "hold"
+    privacy = (body.privacy or ("public" if decision == "now" else "private")).strip()
+    if privacy not in ("public", "unlisted", "private"):
+        privacy = "private"
+    publish_at = (body.publish_at or "").strip() if decision == "schedule" else ""
+    p["publish"] = {"decision": decision, "privacy": privacy if decision != "hold" else "",
+                    "publish_at": publish_at, "title_index": int(body.title_index or 0),
+                    "updated": now()}
+    p.setdefault("options", {}).update({"youtube_privacy": privacy,
+                                        "youtube_publish_at": publish_at,
+                                        "youtube_title_index": int(body.title_index or 0)})
+    save(p)
+    files = {"video": f"/api/projects/{pid}/file/video",
+             "thumb1": f"/api/projects/{pid}/file/thumb1",
+             "thumb2": f"/api/projects/{pid}/file/thumb2",
+             "copy": f"/api/projects/{pid}/file/copy"}
+    if decision == "hold":
+        return {"ok": True, "decision": "hold", "files": files,
+                "message": "업로드하지 않고 파일만 저장했습니다. 나중에 4단계에서 다시 결정할 수 있습니다."}
+    if not yt.has_client():
+        return {"ok": False, "decision": decision, "files": files,
+                "error": "유튜브 채널이 아직 연결되지 않았습니다. [⚙️ 설정] → 유튜브 연동을 먼저 해 주세요."}
+
+    def work(progress):
+        return yt.upload_project(pid, int(body.title_index or 0), privacy, publish_at, progress)
+
+    return {"ok": True, "decision": decision, "privacy": privacy, "publish_at": publish_at,
+            "job": start_job("youtube_upload", work, project_id=pid),
+            "message": ("예약 업로드를 시작합니다." if decision == "schedule" else "지금 업로드를 시작합니다.")}
+
+
 @app.post("/api/projects/{pid}/assemble")
 def assemble(pid: str):
     _check_pid(pid)
@@ -516,6 +895,32 @@ def rebuild_from_script(pid: str, progress) -> dict:
     return {"project_id": pid, "video": p["outputs"].get("video"),
             "duration": p.get("duration"), "script_rev": p.get("script_rev", 0),
             "rebuilt": True}
+
+
+@app.post("/api/projects/{pid}/images/generate")
+def project_images_generate(pid: str):
+    """2단계 — 모드 A(완전자동)의 [이미지 자동 생성]. Gemini 로 빠진 컷을 만든다."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    missing = missing_images(p)
+    if not missing:
+        return {"ok": True, "generated": 0, "message": "이미지가 이미 모두 준비되어 있습니다.", "missing": []}
+    cfg = load_config()
+    if not (cfg.get("gemini_api_key") or "").strip():
+        raise HTTPException(400, "Gemini API 키가 없어 자동 이미지 생성이 안 됩니다. "
+                                "[⚙️ 설정]에 키를 넣거나, 케빈에게 이미지를 요청해 주세요.")
+
+    def work(progress):
+        progress(3, f"장면 이미지 {len(missing)}장 생성 준비…", 2)
+        res = generate_images(p, progress=lambda q, m: progress(3 + int(q * 0.95), m, 2))
+        save(p)
+        left = missing_images(p)
+        progress(100, f"이미지 생성 완료 — 남은 {len(left)}장", 2)
+        return {"project_id": pid, "generated": res.get("generated", 0),
+                "failed": res.get("failed", 0), "missing": left,
+                "message": f"{res.get('generated', 0)}장을 만들었습니다. 남은 {len(left)}장."}
+
+    return {"job": start_job("images", work, project_id=pid)}
 
 
 @app.post("/api/projects/{pid}/images")
@@ -633,6 +1038,7 @@ def project_file(pid: str, kind: str, v: int = 0):
         "request": "이미지_요청서.txt",
         "copy": "upload_copy.txt",
         "project": "project.json",
+        "shorts": out.get("shorts"),
     }
     if kind == "video_preview":
         mapping[kind] = out.get("video")
@@ -855,6 +1261,7 @@ def strategy_execute(body: StrategyIn):
             "sequel": True,
             "teaser_mode": action.get("teaser_mode") or "auto_sequel",
             "voice_mode": "multi",
+            "tone": action.get("tone") or "warm",
             "rate": 0,
             "avatar": True,
             "avatar_kind": "auto",
