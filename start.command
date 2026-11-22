@@ -76,6 +76,8 @@ say "   (브라우저가 자동으로 열리지 않으면 주소를 직접 입�
 say "   이 창을 닫으면 스튜디오가 종료됩니다."
 say ""
 
+# 자동 재시작([🔄 최신 버전 업데이트]) 때 같은 포트를 쓰도록 미리 알려 둔다
+export SEWOL_PORT="$PORT"
 python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --log-level warning &
 SERVER_PID=$!
 cleanup() {

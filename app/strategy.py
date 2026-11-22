@@ -248,10 +248,7 @@ def gemini_cards(data: dict, cards_hint: list[dict]) -> list[dict]:
     cfg = load_config()
     if not (cfg.get("gemini_api_key") or "").strip():
         raise RuntimeError("no key")
-    from google import genai
-    from google.genai import types
-    from .gemini_script import _extract_json
-    client = genai.Client(api_key=cfg["gemini_api_key"])
+    from .gemini_script import _extract_json, call_gemini
     brief = {
         "basis": data.get("basis"),
         "channel_analysis": data.get("analysis"),
@@ -275,10 +272,8 @@ def gemini_cards(data: dict, cards_hint: list[dict]) -> list[dict]:
 JSON 만 출력:
 {{"cards":[{{"id":"time_topic|genre_focus|weekend_bundle","kind":"create|weekend","badge":"짧은 분류",
  "title":"제안 제목","reason":["근거 1","근거 2"],"summary":"한 줄 요약","action":{{...}}}}]}}"""
-    resp = client.models.generate_content(
-        model=cfg.get("text_model") or "gemini-2.5-flash", contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.7, response_mime_type="application/json"))
-    data2 = _extract_json(getattr(resp, "text", "") or "")
+    resp_text = call_gemini(cfg, prompt, temperature=0.7, response_json=True)
+    data2 = _extract_json(resp_text)
     out = []
     for c in data2.get("cards", [])[:3]:
         if not isinstance(c, dict) or not c.get("action"):

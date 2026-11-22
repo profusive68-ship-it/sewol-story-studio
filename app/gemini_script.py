@@ -67,16 +67,93 @@ SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 
 
 
 def _client(cfg: dict):
-    from google import genai  # 설치된 경우에만
     key = (cfg.get("gemini_api_key") or "").strip()
     if not key:
         raise RuntimeError("Gemini API 키가 없습니다.")
+    try:
+        from google import genai  # 설치된 경우에만
+    except ImportError as e:
+        raise RuntimeError("google-genai 가 설치되지 않았습니다. (pip install google-genai)") from e
     return genai.Client(api_key=key)
 
 
+# ── 모델 재시도·폴백 ───────────────────────────────────────────────────────
+# settings.json 에 옛 모델(gemini-2.5-flash)이 저장돼 있어도 최신 모델을 먼저 시도한다.
+PREFERRED_MODEL = "gemini-3.8-flash"
+LEGACY_MODELS = {"gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-flash-preview",
+                 "gemini-2.0-flash-lite", "gemini-1.0-pro"}
+MODEL_FALLBACKS = ("gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash")
+RETRY_SECONDS = 1.5
+BUSY_HINTS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "overloaded",
+              "high demand", "try again", "service unavailable", "exceeded")
+NOT_FOUND_HINTS = ("404", "NOT_FOUND", "not found", "no longer available", "is not supported",
+                   "does not exist", "was not found")
+AUTH_HINTS = ("API key", "API_KEY", "api_key", "permission", "PERMISSION_DENIED",
+              "401", "403", "UNAUTHENTICATED")
+
+
 def _models(cfg: dict) -> list[str]:
-    primary = cfg.get("text_model") or "gemini-2.5-flash"
-    return [primary] + [m for m in (cfg.get("text_model_fallbacks") or []) if m != primary]
+    """시도할 모델 순서. 옛 주 모델이 저장돼 있으면 최신 모델을 맨 앞에 둔다."""
+    primary = (cfg.get("text_model") or "").strip() or PREFERRED_MODEL
+    cands: list[str] = []
+    if primary in LEGACY_MODELS:
+        cands.append(PREFERRED_MODEL)
+    cands.append(primary)
+    cands.extend(MODEL_FALLBACKS)
+    cands.extend(m for m in (cfg.get("text_model_fallbacks") or []) if m)
+    out: list[str] = []
+    for m in cands:
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def _err_text(e: Exception) -> str:
+    return f"{type(e).__name__} {e}"
+
+
+def call_gemini(cfg: dict, prompt: str, *, temperature: float = 0.9,
+                response_json: bool = True, max_output_tokens: int | None = None,
+                system: str | None = None, client=None) -> str:
+    """Gemini 호출 — 503/429 는 1.5초 뒤 1회 재시도, 404 는 다음 모델로 폴백.
+
+    돌려주는 값은 응답 텍스트. JSON 이 필요하면 response_json=True 로 두고
+    받은 텍스트를 _extract_json 에 넘긴다.
+    """
+    try:
+        from google.genai import types
+    except ImportError:          # google-genai 없이도 테스트할 수 있게
+        types = None
+    client = client or _client(cfg)
+    models = _models(cfg)
+    last_err: Exception | None = None
+    for model in models:
+        for attempt in range(2):
+            try:
+                kw: dict = {"temperature": temperature}
+                if response_json:
+                    kw["response_mime_type"] = "application/json"
+                if max_output_tokens:
+                    kw["max_output_tokens"] = int(max_output_tokens)
+                if system:
+                    kw["system_instruction"] = system
+                cfg_obj = types.GenerateContentConfig(**kw) if types else kw
+                resp = client.models.generate_content(
+                    model=model, contents=prompt, config=cfg_obj)
+                return getattr(resp, "text", "") or ""
+            except Exception as e:
+                last_err = e
+                msg = _err_text(e)
+                if any(t in msg for t in AUTH_HINTS):
+                    raise
+                if any(t in msg for t in BUSY_HINTS) and attempt == 0:
+                    time.sleep(RETRY_SECONDS)      # 일시 혼잡 → 1회만 재시도
+                    continue
+                if any(t in msg for t in NOT_FOUND_HINTS):
+                    break                          # 404(모델 없음) → 다음 모델
+                # 두 번째 혼잡 · 그 밖의 오류 → 다음 모델로
+                break
+    raise RuntimeError(f"Gemini 호출 실패(모델 {', '.join(models)}): {last_err}")
 
 
 def _extract_json(text: str) -> dict:
@@ -90,29 +167,9 @@ def _extract_json(text: str) -> dict:
 
 
 def _call(cfg: dict, prompt: str, temperature: float = 0.9) -> dict:
-    from google.genai import types
-    client = _client(cfg)
-    last_err: Exception | None = None
-    for model in _models(cfg):
-        for attempt in range(2):
-            try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        response_mime_type="application/json",
-                        system_instruction=SYSTEM_RULES,
-                    ),
-                )
-                return _extract_json(getattr(resp, "text", "") or "")
-            except Exception as e:
-                last_err = e
-                msg = str(e)
-                if "API key" in msg or "API_KEY" in msg or "permission" in msg.lower():
-                    raise
-                time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"Gemini 호출 실패: {last_err}")
+    text = call_gemini(cfg, prompt, temperature=temperature, response_json=True,
+                       system=SYSTEM_RULES)
+    return _extract_json(text)
 
 
 # ── 1단계: 설계 ────────────────────────────────────────────────────────────

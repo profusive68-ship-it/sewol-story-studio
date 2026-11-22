@@ -46,9 +46,7 @@ def draft_reply(comment: str, video_title: str = "") -> str:
     text = (comment or "").strip()[:300]
     if (cfg.get("gemini_api_key") or "").strip():
         try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=cfg["gemini_api_key"])
+            from .gemini_script import call_gemini
             prompt = f"""한국 시니어 유튜브 채널 '세월의 사연극장'의 답글을 쓴다.
 시청자 댓글: {text}
 영상 제목: {video_title}
@@ -60,10 +58,8 @@ def draft_reply(comment: str, video_title: str = "") -> str:
 - '어느 지역에서 들려주셔서 감사합니다' 같은 자연스러운 인사 허용.
 - 의료·법률·금전 조언은 하지 않는다.
 답글만 출력."""
-            resp = client.models.generate_content(
-                model=cfg.get("text_model") or "gemini-2.5-flash", contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.6, max_output_tokens=200))
-            draft = (getattr(resp, "text", "") or "").strip()
+            draft = call_gemini(cfg, prompt, temperature=0.6, response_json=False,
+                                max_output_tokens=200).strip()
             if draft:
                 return draft[:400]
         except Exception:

@@ -6,6 +6,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import traceback
 import uuid
@@ -13,7 +15,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -222,14 +224,10 @@ def test_config():
     if not (cfg.get("gemini_api_key") or "").strip():
         return {"ok": False, "error": "API 키가 저장되어 있지 않습니다."}
     try:
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=cfg["gemini_api_key"])
-        resp = client.models.generate_content(
-            model=cfg.get("text_model") or "gemini-2.5-flash",
-            contents="한국어로 '연결 성공'이라고만 답해 주세요.",
-            config=types.GenerateContentConfig(temperature=0, max_output_tokens=20))
-        return {"ok": True, "message": (getattr(resp, "text", "") or "").strip()[:40] or "연결 성공"}
+        from .gemini_script import call_gemini
+        text = call_gemini(cfg, "한국어로 '연결 성공'이라고만 답해 주세요.", temperature=0,
+                           response_json=False, max_output_tokens=20)
+        return {"ok": True, "message": (text or "").strip()[:40] or "연결 성공"}
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
 
@@ -521,15 +519,97 @@ def project_file(pid: str, kind: str, v: int = 0):
     return FileResponse(str(path), filename=fname)
 
 
-@app.get("/api/projects/{pid}/image/{name}")
-def project_image(pid: str, name: str):
+@app.get("/api/projects/{pid}/images")
+def project_images(pid: str):
+    """장면 이미지 갤러리 — 컷 번호·파일·mtime·장면 설명·내레이션.
+
+    프론트엔드는 이 signature 가 바뀜 때만 DOM 을 다시 그린다(깜박임 0).
+    """
     _check_pid(pid)
-    if not re.match(r"^[A-Za-z0-9._\-]+\.(png|jpg|jpeg|webp)$", name):
-        raise HTTPException(400, "잘못된 파일 이름입니다.")
-    path = project_dir(pid) / "images" / name
+    p = _load_or_404(pid)
+    rows = _gallery(pid, p)
+    return {"project_id": pid, "total": len(rows),
+            "found": sum(1 for r in rows if r["found"]),
+            "signature": _gallery_signature(rows), "images": rows}
+
+
+def _load_or_404(pid: str) -> dict:
+    try:
+        return load(pid)
+    except FileNotFoundError:
+        raise HTTPException(404, "프로젝트를 찾을 수 없습니다.")
+
+
+def _gallery(pid: str, p: dict) -> list[dict]:
+    """image_plan 순서대로 컷 번호(1부터)를 붙인다. 계획에 없는 이미지는 뒤에 덧붙인다."""
+    have = _image_files(pid)
+    present = set(have)
+    rows: list[dict] = []
+    for idx, img in enumerate(p.get("image_plan") or [], start=1):
+        file = str(img.get("file") or f"s{idx:02d}.png")
+        rows.append(_gallery_row(pid, idx, file, file in present,
+                                 img.get("caption") or "", img.get("prompt") or "",
+                                 img.get("line") or ""))
+    planned = {r["file"] for r in rows}
+    for file in have:
+        if file in planned:
+            continue
+        rows.append(_gallery_row(pid, len(rows) + 1, file, True, "", "", ""))
+    return rows
+
+
+def _gallery_row(pid: str, idx: int, file: str, found: bool,
+                 caption: str, prompt: str, line: str) -> dict:
+    path = project_dir(pid) / "images" / file
+    mtime = 0
+    if found and path.exists():
+        try:
+            mtime = int(path.stat().st_mtime_ns // 1_000_000)
+        except Exception:
+            mtime = 0
+    else:
+        found = False
+    return {"idx": idx, "file": file, "found": found, "mtime": mtime,
+            "url": f"/api/projects/{pid}/image/{idx}?v={mtime}",
+            "caption": " ".join(str(caption).split())[:120],
+            "prompt": " ".join(str(prompt).split())[:400],
+            "line": " ".join(str(line).split())[:400]}
+
+
+def _gallery_signature(rows: list[dict]) -> str:
+    return "|".join(f"{r['idx']}:{int(r['found'])}:{r['mtime']}:{r['caption']}" for r in rows)
+
+
+@app.get("/api/projects/{pid}/image/{name}")
+def project_image(pid: str, name: str, request: Request, v: int = 0):
+    """이미지 한 장 — `name` 은 컷 번호(1부터, 예: 3) 또는 파일명(s03.png).
+
+    캐시방지 헤더(no-cache) + ETag(mtime) 를 붙여 새 이미지는 바로 보이고,
+    바뀌지 않은 이미지는 304 로 다시 그리지 않는다.
+    """
+    _check_pid(pid)
+    file: str | None = None
+    if re.fullmatch(r"\d{1,4}", name or ""):
+        idx = int(name)
+        rows = _gallery(pid, _load_or_404(pid))
+        row = next((r for r in rows if r["idx"] == idx), None)
+        if not row or not row["found"]:
+            raise HTTPException(404, "이미지가 없습니다.")
+        file = row["file"]
+    else:
+        if not re.match(r"^[A-Za-z0-9._\-]+\.(png|jpg|jpeg|webp)$", name or ""):
+            raise HTTPException(400, "잘못된 파일 이름입니다.")
+        file = name
+    path = project_dir(pid) / "images" / file
     if not path.exists():
         raise HTTPException(404, "이미지가 없습니다.")
-    return FileResponse(str(path))
+    st = path.stat()
+    etag = f'"{st.st_mtime_ns}-{st.st_size}"'
+    headers = {"Cache-Control": "no-cache, max-age=0, must-revalidate",
+               "ETag": etag, "Pragma": "no-cache"}
+    if (request.headers.get("if-none-match") or "") == etag:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(str(path), headers=headers)
 
 
 class CompileIn(BaseModel):
@@ -806,7 +886,9 @@ def github_status():
     tok = gh.token()
     return {"repo": gh.repo_name(), "has_token": bool(tok),
             "token_masked": public_config().get("github_token_masked", ""),
-            "label": gh.LABEL, "configured_repo": cfg.get("github_repo") or DEFAULT_GITHUB_REPO}
+            "label": gh.LABEL, "revision_label": gh.KINDS["image_revision"]["label"],
+            "revision_title_prefix": gh.title_prefix("image_revision"),
+            "configured_repo": cfg.get("github_repo") or DEFAULT_GITHUB_REPO}
 
 
 @app.post("/api/github/test")
@@ -820,43 +902,68 @@ def github_test():
 
 class GhRequestIn(BaseModel):
     mode: str = "auto"       # auto | url  (url = 토큰을 쓰지 않고 등록 화면을 연다)
+    kind: str = "image_request"   # image_request | image_revision
+    instruction: str = ""    # 이미지 수정 지시(수정 요청일 때)
 
 
 @app.post("/api/projects/{pid}/github-request")
 def github_request(pid: str, body: GhRequestIn | None = None):
-    """이미지 요청서를 깃허브 이슈로 보낸다 (토큰이 없으면 1클릭 등록 화면)."""
+    """이미지 요청/수정 요청을 깃허브 이슈로 보낸다 (토큰이 없으면 1클릭 등록 화면)."""
     _check_pid(pid)
     p = load(pid)
+    body = body or GhRequestIn()
+    mode = (body.mode or "auto").strip() or "auto"
+    kind = gh.kind_of(body.kind)
+    instruction = (body.instruction or "").strip()
+    if kind == "image_revision" and not instruction:
+        raise HTTPException(400, "수정 지시를 입력해 주세요. 예: '3번 컷 표정 더 놀라게'")
+    p["image_files"] = _image_files(pid)      # 이슈 본문에 '받은 컷' 장수를 적기 위해
+
     req_path = project_dir(pid) / "이미지_요청서.txt"
     if not req_path.exists():
         write_image_request(p)
     text = req_path.read_text(encoding="utf-8") if req_path.exists() else ""
-    plan = gh.build_request(p, text)
-    mode = (body.mode if body else "auto") or "auto"
+    plan = gh.build_request(p, text, kind=kind, instruction=instruction)
     tok = gh.token()
 
     if tok and mode != "url":
         try:
-            issue = gh.create_issue(p, text, tok)
-            _append_request_log(p, issue, "api")
+            issue = gh.create_issue(p, text, tok, kind=kind, instruction=instruction)
+            _append_request_log(p, issue, "api", kind=kind, instruction=instruction)
             return {**plan, "mode": "api", "url": issue["url"], "number": issue.get("number"),
-                    "message": f"깃허브에 이미지 요청 이슈 #{issue.get('number')} 를 등록했습니다."}
+                    "message": _request_done_message(kind, issue.get("number"))}
         except Exception as e:
             plan["fallback_error"] = str(e)[:300]
             plan["copy_body"] = True
-            _append_request_log(p, {"url": plan["url"]}, "url", error=str(e)[:200])
+            _append_request_log(p, {"url": plan["url"]}, "url", error=str(e)[:200],
+                                kind=kind, instruction=instruction)
             return {**plan, "mode": "url",
                     "message": "토큰으로 등록하지 못해 1클릭 등록 화면을 여는 방법으로 넘어갑니다."}
 
-    _append_request_log(p, {"url": plan["url"]}, "url")
-    return {**plan, "mode": "url",
-            "message": "깃허브 새 이슈 화면을 열었습니다. [Create]만 누르면 케빈에게 전달됩니다."}
+    _append_request_log(p, {"url": plan["url"]}, "url", kind=kind, instruction=instruction)
+    return {**plan, "mode": "url", "message": _request_url_message(kind)}
 
 
-def _append_request_log(p: dict, issue: dict, mode: str, error: str = "") -> None:
+def _request_done_message(kind: str, number) -> str:
+    if kind == "image_revision":
+        return (f"깃허브에 이미지 수정 요청 이슈 #{number} 를 등록했습니다. "
+                "케빈이 고친 이미지를 같은 파일명으로 다시 올리면 20초 안에 자동으로 바뀝니다.")
+    return f"깃허브에 이미지 요청 이슈 #{number} 를 등록했습니다."
+
+
+def _request_url_message(kind: str) -> str:
+    if kind == "image_revision":
+        return "깃허브 이미지 수정 요청 화면을 열었습니다. [Create]만 누르면 케빈에게 전달됩니다."
+    return "깃허브 새 이슈 화면을 열었습니다. [Create]만 누르면 케빈에게 전달됩니다."
+
+
+def _append_request_log(p: dict, issue: dict, mode: str, error: str = "",
+                       kind: str = "image_request", instruction: str = "") -> None:
     try:
-        rec = {"time": now(), "mode": mode, "url": issue.get("url", ""),
+        rec = {"time": now(), "mode": mode, "kind": kind, "url": issue.get("url", ""),
                "number": issue.get("number")}
+        if instruction:
+            rec["instruction"] = instruction[:500]
         if error:
             rec["error"] = error
         log = p.setdefault("request_log", [])
@@ -865,6 +972,16 @@ def _append_request_log(p: dict, issue: dict, mode: str, error: str = "") -> Non
         save(p)
     except Exception:
         pass
+
+
+@app.get("/api/projects/{pid}/kevin-timeline")
+def project_kevin_timeline(pid: str):
+    """공개 저장소의 이슈·케빈 진행 댓글을 시간순으로 (토큰 없으면 비인증 조회)."""
+    _check_pid(pid)
+    try:
+        return gh.timeline(pid)
+    except Exception as e:
+        return {"ok": False, "events": [], "issues": [], "error": str(e)[:300]}
 
 
 @app.get("/api/inbox/auto")
@@ -940,17 +1057,105 @@ def inbox_import(body: InboxIn):
     return {"saved": sorted(set(saved)), "missing": missing_images(p)}
 
 
+# ── 프로세스 재시작 (새 코드 반영) ───────────────────────────────
+def _read_head() -> str:
+    """현재 작업 폴더의 git HEAD 커밋. (git 저장소가 아니면 빈 문자열)"""
+    try:
+        r = subprocess.run(["git", "-C", str(BASE), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        return (r.stdout or "").strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+_START_HEAD = _read_head()
+
+
+def _disk_version() -> str:
+    try:
+        return (BASE / "VERSION").read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _server_port() -> int:
+    """지금 서버가 쓰는 포트 — start.command 가 고른 포트를 그대로 재시작에 쓴다.
+
+    순서: 실행 중인 명령줄(--port) → SEWOL_PORT 환경변수 → start.command 의 PORT=.
+    """
+    argv = [str(a) for a in sys.argv]
+    for i, a in enumerate(argv):
+        if a == "--port" and i + 1 < len(argv) and argv[i + 1].isdigit():
+            return int(argv[i + 1])
+        if a.startswith("--port=") and a.split("=", 1)[1].strip().isdigit():
+            return int(a.split("=", 1)[1])
+    for key in ("SEWOL_PORT", "UVICORN_PORT", "PORT"):
+        val = (os.environ.get(key) or "").strip()
+        if val.isdigit():
+            return int(val)
+    try:
+        m = re.search(r"PORT=(\d{2,5})", (BASE / "start.command").read_text(encoding="utf-8"))
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 8765
+
+
+def _restart_argv(port: int) -> list[str]:
+    return [sys.executable, "-m", "uvicorn", "app.main:app",
+            "--host", "0.0.0.0", "--port", str(port)]
+
+
+def _restart_now(port: int) -> None:            # pragma: no cover - 실제 프로세스 교체
+    os.execv(sys.executable, _restart_argv(port))
+
+
+def _schedule_restart(port: int) -> None:
+    """응답을 먼저 보내고 0.6초 뒤 같은 포트로 제자리 재시작한다."""
+    threading.Timer(0.6, lambda: _restart_now(port)).start()
+
+
 @app.post("/api/update/pull")
 def update_pull():
     def work(progress):
         if not (BASE / ".git").exists():
-            return {"ok": False, "message": "이 폴더는 깃허브 저장소가 아닙니다. README 의 [설치]를 참고해 git clone 으로 다시 받아 주세요."}
+            return {"ok": False, "restarting": False,
+                    "message": "이 폴더는 깃허브 저장소가 아닙니다. README 의 [설치]를 참고해 git clone 으로 다시 받아 주세요."}
         progress(20, "깃허브에서 최신 버전 확인 중…")
         res = ib.git_pull()          # 자동 수신 워커와 같은 잠금을 쓴다 (동시 pull 방지)
-        return {"ok": bool(res.get("ok")), "message": (res.get("message") or "")[-1200:],
-                "reason": res.get("reason")}
+        out = res.get("message") or ""
+        disk_ver = _disk_version()
+        ver_changed = bool(disk_ver) and disk_ver != __version__
+        head_now = _read_head()
+        head_changed = bool(head_now and _START_HEAD and head_now != _START_HEAD)
+        # 워커가 먼저 pull 해서 'Already up to date' 가 나와도 코드가 바뀌었으면 재시작한다
+        pulled_code = (bool(res.get("ok")) and res.get("reason") == "updated"
+                       and any(k in out for k in ("app/", "VERSION", "requirements.txt",
+                                                  "static/", "start.command", "tools/")))
+        code_changed = bool(res.get("ok")) and (ver_changed or head_changed or pulled_code)
+        port = _server_port()
+        if code_changed:
+            _schedule_restart(port)
+        if code_changed:
+            msg = (f"새 코드 반영 중… 서버가 {port} 포트로 제자리 재시작합니다. "
+                   "2~3초 뒤 사파리가 자동으로 새로고침됩니다!")
+        elif not res.get("ok"):
+            msg = "업데이트 실패 — " + (res.get("message") or "알 수 없는 이유")
+        else:
+            msg = "이미 최신 버전입니다."
+        return {"ok": bool(res.get("ok")), "restarting": code_changed, "port": port,
+                "running_version": __version__, "disk_version": disk_ver,
+                "head_changed": head_changed, "message": msg,
+                "git": out[-1200:]}
 
     return {"job": start_job("update", work)}
+
+
+@app.post("/api/update")
+def update_now():
+    """예전 이름(/api/update) — 같은 일을 한다(프론트 호환)."""
+    return update_pull()
 
 
 @app.get("/api/download/package")

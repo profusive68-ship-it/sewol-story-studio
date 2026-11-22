@@ -11,6 +11,11 @@ let META = null;
 let CURRENT = null;      // 현재 열어둔 프로젝트
 let POLL = null;
 let A_LAST_JOB = null;
+let GALLERY_SIG = "";    // 이미지·장면 지문 (같으면 DOM 을 다시 그리지 않아 깜빡임 0)
+let DETAIL_SIG = "";
+let GALLERY_ROWS = [];
+let RESTART_WAIT = false;
+let LB_IDX = 0;
 
 const STORE = "sewol.studio.settings.v1";
 const DEFAULTS = {
@@ -296,7 +301,9 @@ function watchJob(jobId, opts = {}) {
     let j;
     try { j = await api(`/api/jobs/${jobId}`); }
     catch (e) {
-      clearInterval(POLL); POLL = null; toast(e.message, true); return;
+      clearInterval(POLL); POLL = null;
+      if (RESTART_WAIT) { waitForServerAndReload(); return; }   // 서버가 새 코드로 다시 뜨는 중
+      toast(e.message, true); return;
     }
     $("#jobBar").style.width = `${j.percent || 0}%`;
     $("#jobMsg").textContent = `${j.percent || 0}% · ${j.message || ""}`;
@@ -309,6 +316,7 @@ function watchJob(jobId, opts = {}) {
     }
     if (j.status === "done") {
       clearInterval(POLL); POLL = null;
+      RESTART_WAIT = false;
       setSteps(7);
       $("#jobBadge").textContent = "완료";
       $("#jobBadge").className = "badge on";
@@ -332,6 +340,7 @@ function watchJob(jobId, opts = {}) {
       if (!opts.quiet) toast("완성되었습니다.");
     } else if (j.status === "error") {
       clearInterval(POLL); POLL = null;
+      RESTART_WAIT = false;
       $("#jobBadge").textContent = "오류";
       $("#jobBadge").className = "badge bad";
       $("#jobMsg").textContent = j.message || "오류가 발생했습니다.";
@@ -382,8 +391,58 @@ async function openProject(id) {
   try {
     const p = await api(`/api/projects/${id}`);
     CURRENT = p;
+    GALLERY_SIG = "";
+    DETAIL_SIG = detailSignature(p);
     renderDetail(p);
+    startDetailPolling(p.id);
   } catch (e) { toast(e.message, true); }
+}
+
+// ── 상세 화면 자동 새로고침 (5초: 갤러리 / 20초: 나머지 / 10초: 케빈 타임라인) ──
+function stopDetailPolling() {
+  ["GALLERY_TIMER", "DETAIL_TIMER", "KEVIN_TIMER"].forEach((k) => {
+    if (window[k]) { clearInterval(window[k]); window[k] = null; }
+  });
+}
+
+function startDetailPolling(pid) {
+  stopDetailPolling();
+  window.GALLERY_TIMER = setInterval(() => {
+    if (CURRENT && CURRENT.id === pid) loadGallery(pid);
+  }, 5000);
+  let ticks = 0;
+  window.DETAIL_TIMER = setInterval(async () => {
+    if (!CURRENT || CURRENT.id !== pid) return;
+    ticks += 1;
+    if (ticks % 4) return;              // 20초마다
+    await refreshDetailIfChanged(pid);
+  }, 5000);
+  window.KEVIN_TIMER = setInterval(() => {
+    if (CURRENT && CURRENT.id === pid) loadKevinTimeline(pid);
+  }, 10000);
+}
+
+function detailSignature(p) {
+  return JSON.stringify([
+    p?.id, p?.title, p?.status?.stage, p?.status?.percent, p?.status?.message,
+    p?.outputs || {}, (p?.image_files || []).length, (p?.missing_images || []).length,
+    (p?.warnings || []).length, (p?.receive_log || []).length, p?.duration,
+  ]);
+}
+
+async function refreshDetailIfChanged(pid) {
+  try {
+    const active = document.activeElement;
+    if (active && active.closest && active.closest("#detailPanel") &&
+        ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;   // 입력 중에는 다시 그리지 않는다
+    const p = await api(`/api/projects/${pid}`);
+    const sig = detailSignature(p);
+    if (sig === DETAIL_SIG && document.querySelector("#imgGallery")) return;
+    DETAIL_SIG = sig;
+    CURRENT = p;
+    renderDetail(p);
+    startDetailPolling(pid);
+  } catch (e) { /* 조용히 */ }
 }
 
 function fileUrl(id, kind) { return `/api/projects/${id}/file/${kind}`; }
@@ -391,17 +450,12 @@ function fileUrl(id, kind) { return `/api/projects/${id}/file/${kind}`; }
 function renderDetail(p) {
   const panel = $("#detailPanel");
   panel.hidden = false;
+  GALLERY_SIG = "";      // 새로 그릴 때는 갤러리도 한 번 다시 불러온다
+  const keepRevise = ($("#imgReviseNote") || {}).value || "";   // 쓰던 수정 지시는 보존
   const done = p.status?.stage === "done";
   const pct = p.status?.percent || 0;
   const planFiles = p.image_plan || [];
   const have = new Set(p.image_files || []);
-  const images = planFiles.map((e) => {
-    const ok = have.has(e.file);
-    return `<figure>${ok
-      ? `<img src="/api/projects/${p.id}/image/${e.file}?v=${Date.now()}" alt="${esc(e.file)}">`
-      : `<div class="missing">${esc(e.file)}<br>없음</div>`}
-      <figcaption>${esc(e.file)}</figcaption></figure>`;
-  }).join("");
 
   const scenes = (p.scenes || []).slice(0, 60).map((s) => {
     const sp = { narrator: "해설", old_male: "노인", old_female: "할머니", female: "여성", young_male: "청년", child: "아이" }[s.speaker] || s.speaker;
@@ -464,7 +518,24 @@ function renderDetail(p) {
         <a class="btn ghost small" href="${fileUrl(p.id, "request")}" target="_blank">요청서 보기</a>
       </div>
       <p class="hint small">요청 누르시면 케빈이 5분 이내에 자동 감지해서 이미지를 깃허브로 보내드립니다 (따로 톡 안 주셔도 됩니다!)</p>
+      <div id="ghRequestResult"></div>
     </div>` : ""}
+    <div class="requestbox" id="imgReviseBox">
+      <label class="label">✏️ 이미지 수정 지시</label>
+      <div class="row">
+        <input id="imgReviseNote" placeholder="예: 3번 컷 표정 더 놀랍게, 5번 더 밝은 톤으로">
+        <button class="btn primary small" id="btnImgRevise">✏️ 케빈에게 이미지 수정 요청</button>
+      </div>
+      <p class="hint small">컷 카드의 번호를 누르면 <b>“N번 컷 ”</b>이 이 칸에 들어갑니다. 케빈이 고쳐서 <b>같은 파일명</b>으로 다시 올리면 20초마다 자동으로 바뀝니다.</p>
+      <div id="imgReviseResult"></div>
+    </div>
+    <div class="kevinbox">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <label class="label" style="margin:0">📊 케빈 실시간 진행 타임라인</label>
+        <button class="btn ghost small" id="btnKevin">🔄 새로고침</button>
+      </div>
+      <pre class="logbox" id="kevinTimeline">요청한 깃허브 이슈가 있으면 진행 단계가 여기에 시간순으로 표시됩니다.</pre>
+    </div>
     <div class="result-links">${links.join("")}</div>
     ${(p.outputs?.video) ? `<div class="ytbox">
       <label class="label">유튜브에 올리기</label>
@@ -483,8 +554,8 @@ function renderDetail(p) {
       ${p.outputs?.shorts ? `<a class="btn small" href="${fileUrl(p.id, "shorts")}" target="_blank">쇼츠 보기</a>` : ""}
     </div>
     ${need.length ? `<p class="hint small">이미지 ${need.length}장이 아직 없습니다: ${need.slice(0, 8).map(esc).join(", ")}</p>` : ""}
-    <label class="label">장면 이미지 (${have.size}/${planFiles.length})</label>
-    <div class="img-grid">${images}</div>
+    <label class="label" id="imgCount">장면 이미지 (${have.size}/${planFiles.length})</label>
+    <div class="img-grid gallery" id="imgGallery"><p class="hint small">이미지 불러오는 중…</p></div>
     <div class="drop" id="dropZone">이미지 파일을 여기에 끌어다 놓거나 클릭해 선택하세요<br><small>s01.png, s02.png … 이름 그대로</small></div>
     <input type="file" id="imgInput" accept="image/*,.zip" multiple hidden>
     <label class="label">썸네일 문구 (수정 후 바로 재생성)</label>
@@ -505,6 +576,15 @@ function renderDetail(p) {
   }));
   $("#btnProjYt")?.addEventListener("click", () => uploadToYoutube(p.id));
   $("#btnGhRequest")?.addEventListener("click", () => requestKevinsImages(p.id));
+  $("#btnImgRevise")?.addEventListener("click", () => {
+    const note = ($("#imgReviseNote")?.value || "").trim();
+    if (!note) return toast("수정 지시를 적어 주세요. 예: 3번 컷 표정 더 놀랍게", true);
+    requestKevinsImages(p.id, { kind: "image_revision", instruction: note });
+  });
+  $("#btnKevin")?.addEventListener("click", () => loadKevinTimeline(p.id, true));
+  $("#imgReviseNote")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("#btnImgRevise")?.click();
+  });
   $("#btnShorts")?.addEventListener("click", () => makeShorts(p.id));
   $("#btnOpenFolder")?.addEventListener("click", async () => {
     try { await api(`/api/projects/${p.id}/open`, { method: "POST" }); }
@@ -522,6 +602,158 @@ function renderDetail(p) {
     uploadImages(p.id, e.dataTransfer.files);
   });
   $("#btnThumb")?.addEventListener("click", () => regenThumb(p.id));
+  if (keepRevise && $("#imgReviseNote")) $("#imgReviseNote").value = keepRevise;
+  loadGallery(p.id);
+  loadKevinTimeline(p.id);
+}
+
+// ── 장면 이미지 갤러리 (지문 비교 → 깜빡이지 않음) ──────────────────
+async function loadGallery(pid, force = false) {
+  if (!CURRENT || CURRENT.id !== pid) return;
+  try {
+    const g = await api(`/api/projects/${pid}/images`);
+    if (!force && g.signature === GALLERY_SIG) return;   // 이미지·장면 변화 없음 → DOM 유지
+    GALLERY_SIG = g.signature;
+    GALLERY_ROWS = g.images || [];
+    renderGallery(pid, g);
+  } catch (e) { /* 조용히 — 다음 폴링에서 다시 시도 */ }
+}
+
+function renderGallery(pid, g) {
+  const box = $("#imgGallery");
+  if (!box) return;
+  const rows = g.images || [];
+  const counter = $("#imgCount");
+  if (counter) counter.textContent = `장면 이미지 (${g.found}/${g.total})`;
+  if (!rows.length) {
+    box.innerHTML = `<p class="hint small">이 사연에는 장면 이미지 계획이 없습니다.</p>`;
+    return;
+  }
+  box.innerHTML = rows.map((r) => {
+    const caption = r.caption || (r.prompt ? r.prompt.slice(0, 90) + (r.prompt.length > 90 ? "…" : "") : "장면 설명 없음");
+    return `<figure class="shot ${r.found ? "" : "missing"}" data-idx="${r.idx}">
+      ${r.found
+        ? `<img src="${esc(r.url)}" alt="${esc(r.file)}" loading="lazy" data-open-img="${r.idx}">`
+        : `<div class="missing" data-open-img="${r.idx}">${esc(r.file)}<br>없음</div>`}
+      <figcaption><b data-cut="${r.idx}" title="누르면 수정 지시에 이 컷 번호가 들어갑니다">${String(r.idx).padStart(2, "0")}</b> ${esc(r.file)}</figcaption>
+      <div class="scene" title="${esc(r.caption || r.prompt || "")}" data-open-img="${r.idx}">${esc(caption)}</div>
+    </figure>`;
+  }).join("");
+  $$("[data-open-img]").forEach((el) => el.addEventListener("click", () => openImage(Number(el.dataset.openImg))));
+  $$("[data-cut]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); pickCut(Number(el.dataset.cut)); }));
+}
+
+function cutByIndex(idx) {
+  return GALLERY_ROWS.find((r) => r.idx === idx) || null;
+}
+
+function ensureLightbox() {
+  let lb = $("#imgLightbox");
+  if (lb) return lb;
+  lb = document.createElement("div");
+  lb.id = "imgLightbox";
+  lb.className = "lightbox";
+  lb.innerHTML = `<div class="inner">
+    <div class="meta">
+      <b id="lbTitle">컷</b>
+      <div class="row" style="gap:6px">
+        <button class="btn ghost small" id="lbPrev">⬅ 이전</button>
+        <button class="btn ghost small" id="lbNext">다음 ➡</button>
+        <button class="btn small" id="lbPick">✏️ 이 컷 수정</button>
+        <button class="btn ghost small" id="lbClose">✕ 닫기</button>
+      </div>
+    </div>
+    <img id="lbImg" alt="">
+    <div class="desc" id="lbDesc"></div>
+  </div>`;
+  document.body.appendChild(lb);
+  lb.addEventListener("click", (e) => { if (e.target === lb) closeImage(); });
+  $("#lbClose").addEventListener("click", closeImage);
+  $("#lbPrev").addEventListener("click", () => openImage(LB_IDX - 1));
+  $("#lbNext").addEventListener("click", () => openImage(LB_IDX + 1));
+  $("#lbPick").addEventListener("click", () => {
+    const r = cutByIndex(LB_IDX);
+    closeImage();
+    if (r) pickCut(r.idx);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!lb.classList.contains("open")) return;
+    if (e.key === "Escape") closeImage();
+    else if (e.key === "ArrowLeft") openImage(LB_IDX - 1);
+    else if (e.key === "ArrowRight") openImage(LB_IDX + 1);
+  });
+  return lb;
+}
+
+function openImage(idx) {
+  if (!GALLERY_ROWS.length) return;
+  const n = GALLERY_ROWS.length;
+  let i = Number(idx);
+  if (!Number.isFinite(i)) i = GALLERY_ROWS[0].idx;
+  if (!cutByIndex(i)) i = n;
+  const pos = GALLERY_ROWS.findIndex((r) => r.idx === i);
+  LB_IDX = GALLERY_ROWS[(pos + n) % n].idx;
+  const r = cutByIndex(LB_IDX);
+  if (!r) return;
+  const lb = ensureLightbox();
+  const title = `컷 ${String(r.idx).padStart(2, "0")} · ${r.file}${r.found ? "" : " · 아직 없음"}`;
+  $("#lbTitle").textContent = title;
+  const img = $("#lbImg");
+  if (r.found) { img.src = r.url; img.style.display = "block"; }
+  else { img.removeAttribute("src"); img.style.display = "none"; }
+  const parts = [];
+  if (r.caption) parts.push(`<b>장면:</b> ${esc(r.caption)}`);
+  if (r.line) parts.push(`<b>내레이션:</b> ${esc(r.line)}`);
+  if (r.prompt) parts.push(`<b>이미지 프롬프트:</b> ${esc(r.prompt)}`);
+  $("#lbDesc").innerHTML = parts.length ? parts.join("<br>") : "장면·내레이션 정보가 없습니다.";
+  lb.classList.add("open");
+}
+
+function closeImage() {
+  const lb = $("#imgLightbox");
+  if (lb) lb.classList.remove("open");
+}
+
+function pickCut(idx) {
+  const inp = $("#imgReviseNote");
+  if (!inp) return;
+  const token = `${idx}번 컷 `;
+  if (!inp.value.includes(token)) inp.value = (inp.value.trim() ? inp.value.trim() + ", " : "") + token;
+  inp.focus();
+  try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (e) {}
+  $("#imgReviseBox")?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ── 케빈 실시간 진행 타임라인 (깃허브 이슈·댓글) ──────────────────────
+function kstClock(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const p2 = (x) => String(x).padStart(2, "0");
+    return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  } catch (e) { return String(iso).slice(5, 16).replace("T", " "); }
+}
+
+async function loadKevinTimeline(pid, force = false) {
+  pid = pid || CURRENT?.id;
+  const box = $("#kevinTimeline");
+  if (!box || !pid) return;
+  try {
+    const r = await api(`/api/projects/${pid}/kevin-timeline`);
+    if (!r.ok) {
+      box.textContent = r.error || "타임라인을 불러오지 못했습니다." + (r.has_token === false ? " (토큰 없이 공개 저장소를 조회합니다)" : "");
+      return;
+    }
+    const events = r.events || [];
+    if (!events.length) {
+      box.textContent = "이 사연에 등록된 깃허브 요청이 아직 없습니다. [📤 케빈에게 이미지 요청하기] 나 [✏️ 이미지 수정 요청] 을 누르면 진행 단계가 여기에 실시간으로 쌓입니다.";
+      return;
+    }
+    box.textContent = events.map((ev) => `[${kstClock(ev.at)}] ${ev.text}`).join("\n");
+    if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 40) box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    box.textContent = `조회 오류: ${e.message}`;
+  }
 }
 
 function ytPrivacyPayload() {
@@ -756,42 +988,63 @@ async function testGhToken() {
   finally { $("#btnGhTest").disabled = false; }
 }
 
-async function requestKevinsImages(id) {
+async function requestKevinsImages(id, opts = {}) {
+  const kind = opts.kind || "image_request";
+  const instruction = (opts.instruction || "").trim();
+  const isRev = kind === "image_revision";
   // 팝업 차단을 피하려고 클릭 시점에 빈 창을 먼저 열어 둔다
   let win = null;
   try { win = window.open("", "_blank"); } catch (e) { win = null; }
-  const btn = $("#btnGhRequest");
-  if (btn) { btn.disabled = true; btn.textContent = "요청 보내는 중…"; }
+  const btn = $(isRev ? "#btnImgRevise" : "#btnGhRequest");
+  const idle = isRev ? "✏️ 케빈에게 이미지 수정 요청" : "📤 케빈에게 이미지 요청하기";
+  if (btn) { btn.disabled = true; btn.textContent = isRev ? "수정 요청 보내는 중…" : "요청 보내는 중…"; }
   const open = (url) => {
+    if (!url) return;
     if (win && !win.closed) win.location.href = url;
     else window.open(url, "_blank");
   };
   try {
     const r = await api(`/api/projects/${id}/github-request`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "auto" }),
+      body: JSON.stringify({ mode: "auto", kind, instruction }),
     });
     open(r.url);
+    if (isRev) renderReviseResult(r);
     if (r.fallback_error) toast("토큰 등록 실패 — 1클릭 등록 화면으로 넘어갑니다: " + r.fallback_error, true);
     if (r.mode === "api") {
-      toast(`깃허브 이미지 요청 이슈 #${r.number} 등록 완료 · 케빈이 5분 이내에 자동 감지해서 이미지를 보내드립니다.`);
-      return;
-    }
-    const copied = r.copy_body ? await copyText(r.body, true) : false;
-    if (r.prefill === "none") {
-      toast(copied
-        ? "깃허브 새 이슈 화면을 열었습니다. 본문 칸에서 ⌘V로 붙여넣고 [Create issue]를 누르세요."
-        : "깃허브 새 이슈 화면을 열었습니다. [요청서 보기]의 내용을 붙여넣고 [Create issue]를 누르세요.", true);
+      toast(r.message || `깃허브 요청 이슈 #${r.number} 등록 완료`);
     } else {
-      toast("깃허브 새 이슈 화면이 열렸습니다. [Create issue]만 누르면 케빈에게 전달됩니다."
-        + (copied ? " (요청서 전문은 클립보드에 복사해 두었습니다)" : ""));
+      const copied = r.copy_body ? await copyText(r.body, true) : false;
+      if (r.prefill === "none") {
+        toast(copied
+          ? "깃허브 등록 화면을 열었습니다. 본문 칸에서 ⌘V로 붙여넣고 [Create issue]를 누르세요."
+          : "깃허브 등록 화면을 열었습니다. [요청서 보기]의 내용을 붙여넣고 [Create issue]를 누르세요.", true);
+      } else {
+        toast("깃허브 등록 화면이 열렸습니다. [Create issue]만 누르면 케빈에게 전달됩니다."
+          + (copied ? " (요청서 전문은 클립보드에 복사해 두었습니다)" : ""));
+      }
     }
+    await loadKevinTimeline(id, true);            // 요청 직후 바로 타임라인 갱신
+    setTimeout(() => loadKevinTimeline(id, true), 4000);
+    if (isRev) setTimeout(() => loadKevinTimeline(id, true), 12000);
   } catch (e) {
     if (win && !win.closed) win.close();
     toast(e.message, true);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "📤 케빈에게 이미지 요청하기"; }
+    if (btn) { btn.disabled = false; btn.textContent = idle; }
   }
+}
+
+function renderReviseResult(r) {
+  const box = $("#imgReviseResult");
+  if (!box) return;
+  const head = r.mode === "api" ? "✅ 깃허브 수정 요청 이슈 생성됨" : "📝 깃허브 등록 화면 열림";
+  box.innerHTML = `<div class="revise-result">
+    <b>${esc(head)}</b> · <span class="hint small">${esc(r.target_inbox || "")}</span>
+    <div>${esc(r.message || "")}</div>
+    ${r.instruction ? `<div class="hint small">지시: ${esc(r.instruction)}</div>` : ""}
+    ${r.url ? `<a href="${esc(r.url)}" target="_blank">깃허브에서 열기</a>` : ""}
+  </div>`;
 }
 
 // ── 자동 이미지 수신 ────────────────────────────────────────────────
@@ -876,13 +1129,35 @@ async function checkInboxNow() {
 // ── 업데이트 · 이미지 인박스 ─────────────────────────────────────────────
 async function updatePull() {
   $("#updateMsg").textContent = "최신 버전 확인 중…";
+  RESTART_WAIT = true;      // 서버가 새 코드로 재시작할 수 있다 — 폴링 실패를 오류로 보지 않는다
   try {
     const { job } = await api("/api/update/pull", { method: "POST" });
-    watchJob(job, { onDone: async (j) => {
-      $("#updateMsg").textContent = j.result?.message || "완료";
+    watchJob(job, { quiet: true, onDone: async (j) => {
+      const r = j.result || {};
+      $("#updateMsg").textContent = r.message || "완료";
+      if (r.restarting) { waitForServerAndReload(r.message); return; }
+      RESTART_WAIT = false;
       await loadInbox();
+      await loadHealth();
     }});
-  } catch (e) { $("#updateMsg").textContent = e.message; }
+  } catch (e) {
+    RESTART_WAIT = false;
+    $("#updateMsg").textContent = e.message;
+  }
+}
+
+async function waitForServerAndReload(msg) {
+  const el = $("#updateMsg");
+  if (el) el.textContent = msg || "새 코드로 다시 시작하는 중… 2~3초 뒤 자동 새로고침됩니다.";
+  await new Promise((r) => setTimeout(r, 1200));      // 재시작 타이머(0.6초) + 기동 시간
+  for (let i = 0; i < 24; i++) {
+    try {
+      const res = await fetch(`/api/health?t=${Date.now()}`, { cache: "no-store" });
+      if (res.ok) { location.reload(); return; }
+    } catch (e) { /* 아직 준비 중 */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  location.reload();
 }
 
 async function loadInbox() {
