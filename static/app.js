@@ -911,6 +911,7 @@ function renderLineList(scenes) {
         <b>${esc(s.id)}</b>
         <select data-role="speaker">${Object.entries(SPEAKER_LABEL).map(([k, v]) => `<option value="${k}" ${k === (s.speaker || "narrator") ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>
         <select data-role="emotion">${Object.entries(EMOTION_LABEL).map(([k, v]) => `<option value="${k}" ${k === (s.emotion || "heal") ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>
+        ${s.speaker_name && s.speaker_name !== SPEAKER_LABEL[s.speaker] ? `<span class="tag">${esc(s.speaker_name)}</span>` : ""}
         ${s.placement ? `<span class="tag">${esc(PLACEMENT_LABEL[s.placement] || s.placement)}</span>` : ""}
         <button class="btn ghost small" data-play="${esc(s.id)}" type="button">▶ 들어보기</button>
         <button class="btn small" data-record="${esc(s.id)}" type="button">🎙 재녹음</button>

@@ -427,6 +427,7 @@ def main() -> int:
     check("index.html 0.85~1.15배 안내", "0.85배 ~ 1.15배" in home, "")
     js = client.get("/static/app.js").text
     check("app.js 에 rateText", "function rateText" in js, "")
+    check("대사 목록에 인물 이름 태그", 's.speaker_name && s.speaker_name !== SPEAKER_LABEL[s.speaker]' in js, "")
     check("app.js 속도 표시에 배율", "x${x}" in js, "")
     check("index.html 이 v2.0.2 자산을 부른다", "/static/app.js?v=2.0.2" in home, "")
 
