@@ -1,17 +1,22 @@
 """성우 낭독 — OpenAI 감성 TTS(gpt-4o-mini-tts) · 무료 edge-tts 폴백 · 발음 사전 · 캐시.
 
+v2.0.2 — 속도 조절 폭 확대(모든 화자 동일)
+  · 사용자가 전체 템포를 **0.85x ~ 1.15x(±15%)** 로 조절할 수 있다. 해설·인물·노인·아이 모두
+    같은 배율을 쓰므로 화자 사이 속도 차이는 없다(`SPEED_TOLERANCE` 0.03 이내 유지).
+    노인을 느리게 하는 것은 속도가 아니라 음높이(pitch)와 연기 지시로 만든다.
+
 v2.0.0 — 성우 분리 · 속도 균일화 · 호흡 간격
   · **해설(narrator)과 대화 인물의 목소리를 절대 같은 voice 로 쓰지 않는다.**
     프로젝트의 장면을 한 번 훑어 `project_voice_plan()` 으로 화자별 목소리를 확정하고,
     그 표를 `project.json` 의 `voice_plan` 에 남겨 2단계 미리듣기·재녹음·본 렌더가
     모두 같은 목소리를 쓰게 한다. (해설 onyx ↔ 대화 ash/echo/verse/nova/shimmer/sage …)
   · **모든 화자의 속도를 하나로 고정한다.** `uniform_speed()` 는 언제나
-    `1.00 ± 0.03` 범위(낭독 속도 설정도 ±3%)만 돌려주고, 해설·노인·아이 모두 같은 값을 쓴다.
-    느린 노인 톤은 속도가 아니라 음높이(pitch)와 연기 지시로 만든다.
+    `1.00 ± SPEED_RANGE`(0.15) 범위(낭독 속도 설정도 ±15%)만 돌려주고, 해설·노인·아이 모두 같은 값을 쓴다.
   · 지시문(instructions)에 "극단적으로 빠르거나 느린 속도 금지, 해설과 같은 안정된
     한국어 낭독 속도 유지"를 항상 덧붙인다(`SPEED_RULE`).
   · 문장이 길어 여러 덩어리로 나뉠 때는 앞뒤 무음을 다듬고(`silenceremove`) **0.32초
     호흡 간격**으로 이어 붙인다(`join_with_breath`). ffmpeg 가 없으면 원본 그대로 잇는다.
+  · 화자 표기(어머니·며느리·여성·남성 …)는 `app/speakers.py` 가 배역으로 확정한 값을 받는다.
 
 엔진 선택(`config.tts_engine`)
   · "edge"   : 무료 edge-tts (기본값, 설치 없이 바로)
@@ -40,7 +45,8 @@ from .ffmpeg_util import duration, ffmpeg_exe
 from .paths import CACHE_DIR, project_dir
 from .pronunciation import tts_text
 from .settings import (BREATH_GAP_MAX, BREATH_GAP_MIN, BREATH_GAP_SECONDS, NARRATION_SPEED,
-                       SPEED_TOLERANCE, VOICE_MAP, VOICE_SUBSTITUTES, load_config)
+                       SPEED_RANGE, SPEED_RATE_MAX, SPEED_RATE_MIN, SPEED_TOLERANCE, VOICE_MAP,
+                       VOICE_SUBSTITUTES, load_config)
 
 try:  # requests 가 있으면 그대로 쓰고, 없으면 표준 라이브러리로 호출한다
     import requests  # type: ignore
@@ -60,7 +66,7 @@ TEST_TEXT = "안녕하세요. 세월의 사연극장입니다. 이 목소리가 
 TEST_PREVIEW_NAME = "openai_test.mp3"
 
 # ── v2.0.0 속도·호흡 기준 ────────────────────────────────────────────────
-# 모든 화자가 같은 속도를 쓴다. 낭독 속도 설정은 ±3% 안에서만 반영한다.
+# 모든 화자가 같은 속도를 쓴다. 낭독 속도 설정은 ±15%(SPEED_RANGE) 안에서 함께 움직인다.
 SPEED_RULE = ("속도는 극단적으로 빠르거나 느리게 읽지 말고, 해설자와 똑같은 안정된 "
               "한국어 낭독 속도를 유지하세요. 말이 빨라지거나 느려지면 안 됩니다.")
 
@@ -89,7 +95,8 @@ OPENAI_ROLE_ALIASES = {
     "man": "young_male", "woman": "female", "boy": "child", "girl": "child",
     "해설": "narrator", "노인": "old_male", "할머니": "old_female",
     "여성": "female", "청년": "young_male", "아이": "child",
-    "narr": "narrator", "narration": "narrator", "해설자": "narrator",
+    "남성": "young_male", "남자": "young_male", "여자": "female",
+    "narr": "narrator", "narration": "narrator", "해설자": "narrator", "나레이션": "narrator",
     "어머니": "old_female", "아버지": "old_male", "며느리": "female", "아들": "young_male",
     "시어머니": "old_female", "딸": "female", "손자": "child", "손녀": "child",
 }
@@ -234,24 +241,24 @@ def normalize_gender(gender) -> str:
 
 # ── 속도 균일화 ──────────────────────────────────────────────────────────
 def uniform_speed(rate: int = 0) -> float:
-    """모든 화자가 함께 쓰는 OpenAI speed 배율 — 언제나 1.00 ± 0.03."""
+    """모든 화자가 함께 쓰는 OpenAI speed 배율 — 1.00 ± SPEED_RANGE(±0.15)."""
     try:
         r = int(rate)
     except Exception:
         r = 0
-    pct = max(-3, min(3, r))                     # ±3% = ±0.03
-    lo = round(NARRATION_SPEED - SPEED_TOLERANCE, 2)
-    hi = round(NARRATION_SPEED + SPEED_TOLERANCE, 2)
+    pct = max(SPEED_RATE_MIN, min(SPEED_RATE_MAX, r))     # ±15% = ±0.15
+    lo = round(NARRATION_SPEED - SPEED_RANGE, 2)
+    hi = round(NARRATION_SPEED + SPEED_RANGE, 2)
     return round(max(lo, min(hi, NARRATION_SPEED + pct / 100.0)), 2)
 
 
 def uniform_rate(rate: int = 0) -> int:
-    """edge-tts 낭독 속도(%) — 모든 화자 공통, ±3% 안에서만."""
+    """edge-tts 낭독 속도(%) — 모든 화자 공통, ±15% 안에서만."""
     try:
         r = int(rate)
     except Exception:
         r = 0
-    return max(-3, min(3, r))
+    return max(SPEED_RATE_MIN, min(SPEED_RATE_MAX, r))
 
 
 def openai_speed(rate: int) -> float:
@@ -435,12 +442,13 @@ def edge_cast(role: str, mode: str, global_rate: int, age="", gender="", tone=""
     """무료 edge-tts 목소리·피치·속도.
 
     나이·성별 정보가 없으면 기존 배역 기본값 그대로(하위 호환).
-    정보가 있으면 해설 목소리와 다른 음성을 쓰고, 속도는 모든 화자가 같은 값(±3%)이다.
+    정보가 있으면 해설 목소리와 다른 음성을 쓰고, 속도는 모든 화자가 같은 값(±15%)이다.
     """
     voice, pitch, rate = _role_cfg(role, mode, global_rate)
     has_meta = bool(str(age or "").strip() or normalize_gender(gender) or str(tone or "").strip())
     if not has_meta:
-        return voice, pitch, rate
+        # 인물 정보가 없어도 속도는 모든 화자 동일(배역별 기본 속도 차이는 두지 않는다)
+        return voice, pitch, uniform_rate(global_rate)
     narrator = edge_narrator_voice(mode)
     role_n = _norm_role(role)
     if _is_narrator(role):
@@ -506,10 +514,12 @@ def speaker_key(scene: dict | None) -> str:
 
 
 def speaker_label(key: str, scene: dict | None = None) -> str:
-    """화면에 보여 줄 화자 이름 — '며느리(30대·여성)' 처럼."""
+    """화면에 보여 줄 화자 이름 — '어머니 (70대 후반·female)' 처럼."""
     from .settings import SPEAKER_LABELS
+    sc = scene or {}
     role = key.split("|")[0]
-    label = SPEAKER_LABELS.get(role, role)
+    label = (str(sc.get("speaker_name") or "").strip()
+             or SPEAKER_LABELS.get(role, role))
     parts = [p for p in key.split("|")[1:] if p]
     if parts:
         return f"{label} ({'·'.join(parts)})"

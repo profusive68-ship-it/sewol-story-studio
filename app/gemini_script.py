@@ -27,6 +27,7 @@ from typing import Callable, Optional
 from . import openai_script as oai
 from .honorifics import harmonize_script
 from .settings import GENRES, FORMAT_PRESETS, STORY_TONES
+from .speakers import SPEAKER_ROLES, assign_dialogue_speakers, resolve_speaker
 
 SFX_VOCAB = ["문 쾅", "문 닫기", "문 삽입", "문 삐걱", "찻잔", "숟가락", "한숨",
              "심장박동", "발자국", "비", "바람", "바람 창", "새소리", "종", "전화벨",
@@ -34,7 +35,7 @@ SFX_VOCAB = ["문 쾅", "문 닫기", "문 삽입", "문 삐걱", "찻잔", "숟
              "숨죽임", "병원 룸톤", "냄비 보글", "장판", "상자", "가방", "테이프",
              "침대 시트", "냉장고 웅웅", "뚜껑 열림", "박수", "울음"]
 EMOTIONS = ["conflict", "twist", "heal"]
-SPEAKERS = ("narrator", "old_male", "old_female", "female", "young_male", "child")
+SPEAKERS = SPEAKER_ROLES      # 화자 배정은 app/speakers.py 한 곳에서 정한다 (v2.0.2)
 
 SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 아래는 절대 규칙이다.
 
@@ -42,11 +43,22 @@ SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 
 - 해설(narrator)만 길게 이어 쓰지 않는다. 전체 대사 중 **인물 간의 직접 대화(생생한 구어체 대사)를 약 30~40% 비중**으로
   자연스럽게 섞는다. 해설로 상황을 요약하기 전에, 그 자리에서 사람들이 실제로 주고받을 말을 먼저 내놓는다.
 - 인물 대사는 그 사람의 나이·성별·성격·지금 처한 상황이 말투에 배어 나오게 쓴다.
+
+[화자 배정 — 최우선]
+- `narrator` 는 **해설(3인칭 서술)에만** 쓴다. 예: "집 안은 그대로였습니다.", "그는 김치통 뚜껑을 열었습니다."
+- **인물이 직접 말하는 대사는 절대 `narrator` 로 적지 않는다.** 그 말을 하는 인물의 이름(어머니·아들·딸·
+  며느리·시어머니·남편·아내 등 구체적 역할)을 `speaker` 에 적는다.
+- 대사 판별 기준 — 아래 중 하나라도 해당하면 반드시 인물 화자다.
+  ① 따옴표 안의 말("어머니, 이게 대체 무슨 말이야?"), ② 호칭으로 시작(어머니, / 엄마, / 아들아, / 여보, / 며느리야),
+  ③ 1·2인칭 구어체(내가 / 네가 / 나는 / 당신이 / 우리), ④ 물음표·느낌표로 끝남,
+  ⑤ "~요" "~야" "~님" "~세요" "~해줘" "~거야" 같은 말투로 끝남.
+- 반대로 아래는 `narrator` 다: 사건·상황을 밖에서 서술하는 문장("~했습니다" "~였다" "~고 있었다").
+- 화자가 바뀌는 지점은 독자가 바로 알아야 한다. 같은 사람 대사를 중간에 narrator 로 돌리지 않는다.
 - 인물이 말하는 장면마다 그 대사의 화자 정보를 함께 적는다:
     "speaker_age": "70대 후반" 처럼 나이(예: "78세", "30대 초반", "8세"),
     "speaker_gender": "male" 또는 "female",
     "speaker_tone": "다정하지만 기력이 약한 병상의 노모" 처럼 성격·처지·지금 감정을 한 줄로.
-  이 정보는 그 장면의 음성 연기(목소리 톤·속도)에 그대로 쓰인다. 해설(narrator) 장면에는 넣지 않는다.
+  이 정보가 그 장면의 음성 연기(목소리 톤·속도)에 그대로 쓰인다. 해설(narrator) 장면에는 넣지 않는다.
 
 [콜드 오픈 — 최우선]
 - '안녕하세요', '세월의 사연극장입니다', '오늘의 사연은', '어서 오세요' 같은 인사·채널 소개·사연 예고로 시작하지 않는다.
@@ -88,7 +100,8 @@ SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 
 - 해시태그는 실제 검색되는 것: #사연 #라디오드라마 #감동사연 #사이다 #가족사연 #시니어 #노인사연 #실화같은이야기 등.
 
 [형식]
-- 화자: narrator, old_male, old_female, female, young_male, child 중 하나.
+- 화자: 해설은 `narrator`. 인물 대사는 그 인물 이름(어머니·아들·며느리·시어머니·딸·남편…)이나 배역 이름
+  (old_male·old_female·female·young_male·child) 중 하나.
   인물 대사 장면에는 speaker_age(나이 문자열)·speaker_gender("male"|"female")·speaker_tone(성격·상황 한 줄)을 반드시 함께 넣는다.
 - 감정: conflict(갈등), twist(반전), heal(치유) 중 하나.
 - 효과음 sfx: 다음 목록에서만 0~2개. 대사에 [문 쾅] 같은 태그를 직접 쓰지 말고 sfx 배열에 넣는다.
@@ -410,14 +423,14 @@ JSON 만 출력:
   "description": "유튜브 설명문 줄거리 3~5줄 (스포일러 최소)",
   "hashtags": ["#사연","#라디오드라마","#감동사연","#사이다","#가족사연","#시니어","#노인사연","#실화같은이야기"],
   "setting": "연도·지역·집/곳",
-  "characters": [{{"id":"mother","name":"어머니 순자","relation":"주인공의 어머니","age":"78세",
+  "characters": [{{"id":"mother","name":"어머니 순자","relation":"주인공의 어머니","age":"78세","gender":"female",
                    "habit":"말끝을 흐리는 버릇","desc_en":"Korean grandmother, 78, silver hair in a low bun, faded floral apron, deep wrinkles, gentle tired eyes"}}],
   "evidence": [{{"item":"국민은행 통장","detail":"2003년 3월 14일, 3만 원 입금 옆 연필 메모 '호야 학원비'","meaning":"어머니가 몰래 넣어 준 돈","reveal_act":4}}],
   "acts": [{{"act":1,"name":"발단","summary":"...","plant":"...","payoff":"..."}}],
   "hook": {{"line":"0초에 나갈 충격 대사","situation":"그 장면 상황","rewind_caption":"사흘 전, 아무것도 몰랐던 그날"}},
   "chapters": [{{"index":1,"act":1,"title":"장 제목","beat":"이 장에서 일어날 일 2문장","pov":"중심 인물"}}],
   "sequel_teaser": "이번 사연 6개월 뒤 후속편 복선 2~3문장",
-  "next_story": {"title": "다음 사연 제목", "teaser": "다음 사연 예고 1~2문장"},
+  "next_story": {{"title": "다음 사연 제목", "teaser": "다음 사연 예고 1~2문장"}},
   "thumbnail": {{"style1":["첫째 줄 8자 내외","둘째 줄 10자 내외"],
                 "style2":["대화체 1","대화체 2","반전 한 줄","마지막 유도 한 줄"]}},
   "upload": {{"title":"유튜브 제목","description":"설명 3~5줄","tags":["태그","6개"]}}
@@ -464,6 +477,9 @@ hook.line 을 첫 대사로 쓰고, 그 상황 한복판에서 시작한다. 인
   요약할 수 있는 상황도 인물들의 실제 말다툼·다정한 말·머뭇거림으로 보여 준다. 대사는 실제 말투 그대로.
 - 인물이 말하는 장면마다 speaker_age(예: "40대 후반", "78세", "8세")·speaker_gender("male"|"female")·
   speaker_tone(성격·처지·지금 감정 한 줄)을 함께 적는다. 이 정보가 목소리 연기에 그대로 쓰인다.
+- **화자 배정(speaker)**: 해설은 `narrator`, 인물 대사는 그 말을 하는 인물 이름(어머니·아들·딸·며느리·시어머니·
+  남편 등) 또는 배역(old_male·old_female·female·young_male·child)을 적는다.
+  호칭이 들어가거나 물음표·느낌표·구어체로 끝나는 대사를 `narrator` 로 적지 않는다.
 - 일본어 번역투 금지(~에 대해, ~에 있어서, ~되어진다, ~라는 사실을 알게 되었다, 그녀/그는 남발).
 - 장면마다 효과음(sfx)을 1~2개 붙인다. 표에 있는 것만. 대사 속에 [대괄호] 태그를 쓰지 않는다.
 - 효과음은 대사의 문장 시작·대화 사이·문장 끝에 자연스럽게 깔리도록 고른다(문 여닫기, 발자국,
@@ -475,9 +491,10 @@ hook.line 을 첫 대사로 쓰고, 그 상황 한복판에서 시작한다. 인
 - image_prompt 는 영어, 인물 묘사를 설계의 desc_en 그대로 반복, no text.
 
 JSON 만 출력:
-{{"scenes":[{{"speaker":"narrator","text":"...","emotion":"conflict","sfx":["한숨"],
+{{"scenes":[{{"speaker":"narrator","text":"집 안은 그대로였습니다. 먼지만 앉아 있었습니다.",
+  "emotion":"conflict","sfx":["한숨"],
   "image_prompt":"English cinematic still, ...","image_caption":"한국어 장면 설명"}},
- {{"speaker":"son","text":"...","emotion":"conflict","sfx":[],
+ {{"speaker":"아들","text":"어머니, 이게 대체 무슨 말이야?","emotion":"conflict","sfx":[],
   "speaker_age":"40대 후반","speaker_gender":"male",
   "speaker_tone":"십 년 만에 집을 연 아들, 서운함과 그리움이 뒤섞임",
   "image_prompt":"...","image_caption":"..."}}]}}"""
@@ -502,7 +519,8 @@ JSON 만 출력:
 {{"title":"대표 제목","titles":["제목안1","제목안2","제목안3"],"logline":"한 줄 소개",
   "description":"설명문 줄거리 3줄","hashtags":["#사연","#라디오드라마","#감동사연","#반전","#가족사연","#시니어","#노인사연","#이야기"],
   "setting":"연도·지역·장소",
-  "characters":[{{"id":"mother","name":"어머니","relation":"...","age":"...","desc_en":"English visual, repeated in every image"}}],
+  "characters":[{{"id":"mother","name":"어머니","relation":"...","age":"70대 후반","gender":"female",
+                 "desc_en":"English visual, repeated in every image"}}],
   "evidence":[{{"item":"...","detail":"...","meaning":"..."}}],
   "acts":[{{"act":1,"name":"훅","summary":"...","plant":"...","payoff":"..."}}],
   "hook":{{"line":"0초 충격 대사","situation":"...","rewind_caption":"사흘 전, 그날"}},
@@ -653,18 +671,19 @@ def normalize_script(data: dict, settings: dict) -> dict:
         if not text:
             continue
         raw_speaker = str(s.get("speaker") or "").strip()
-        speaker = raw_speaker or "narrator"
-        if speaker not in SPEAKERS:
-            speaker = "narrator"
-        emotion = str(s.get("emotion") or "heal").strip()
-        if emotion not in EMOTIONS:
-            emotion = "heal"
-        sfx = [str(x).strip() for x in (s.get("sfx") or []) if str(x).strip() in SFX_VOCAB][:2]
         meta = {
             "age": str(s.get("speaker_age") or "").strip()[:20],
             "gender": str(s.get("speaker_gender") or "").strip().lower()[:10],
             "tone": re.sub(r"\s+", " ", str(s.get("speaker_tone") or "")).strip()[:120],
         }
+        # 화자 이름(어머니·며느리·son …)을 표준 배역으로 확정한다(v2.0.2).
+        # 여기서 narrator 로 뭉개지 않게, 모르는 이름은 아래 대사 판별에서 다시 살린다.
+        speaker, speaker_name = resolve_speaker(raw_speaker, data.get("characters"),
+                                                age=meta["age"], gender=meta["gender"])
+        emotion = str(s.get("emotion") or "heal").strip()
+        if emotion not in EMOTIONS:
+            emotion = "heal"
+        sfx = [str(x).strip() for x in (s.get("sfx") or []) if str(x).strip() in SFX_VOCAB][:2]
         if raw_speaker and raw_speaker.lower() != "narrator" and not (meta["age"] or meta["gender"]):
             fill = char_meta.get(raw_speaker.lower())
             if fill:
@@ -680,6 +699,7 @@ def normalize_script(data: dict, settings: dict) -> dict:
         scenes.append({
             "id": f"s{len(scenes) + 1:02d}",
             "speaker": speaker,
+            "speaker_name": speaker_name,
             "text": text,
             "emotion": emotion,
             "sfx": sfx,
@@ -707,6 +727,11 @@ def normalize_script(data: dict, settings: dict) -> dict:
             sc["chapter"] = 1
 
     hook_ids = _pick_hook_ids(scenes, hook_line)
+    # 고정 카드(되감기·예고·엔딩)와 디자인이 직접 넣은 훅 카드는 그대로 두고,
+    # 모델이 쓴 장면에서 해설로 적힌 인물 대사를 문맥상 화자로 돌린다(v2.0.2).
+    fixed_ids = [sc["id"] for sc in scenes
+                 if sc.get("hook_line") or sc.get("placement") or sc.get("card")]
+    scenes = assign_dialogue_speakers(scenes, data.get("characters"), exclude_ids=fixed_ids)
     title = (data.get("title") or "세월의 사연").strip()[:40]
     chars = []
     for c in (data.get("characters") or []):

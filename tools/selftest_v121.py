@@ -237,16 +237,17 @@ def main() -> int:
               "별칭 매핑 틀림")
         p_hd = T.openai_payload_preview("x", "narrator", model="tts-1-hd")
         check("tts-1-hd 에는 instructions 없음", "instructions" not in p_hd, str(p_hd))
-        # v2.0.0 — 모든 화자 속도 균일화: 낭독 속도는 1.00 ± 0.03 안에서만 반영된다.
+        # v2.0.2 — 모든 화자 속도 균일화는 그대로, 사용자가 전체 템포를 ±15%까지 조절한다.
         sp_slow = T.openai_payload_preview("x", "narrator", rate=-10)["speed"]
-        check("speed 균일화(-10% → 0.97)", sp_slow == 0.97, str(sp_slow))
-        check("speed 편차 ±0.03 이내",
-              all(abs(T.openai_payload_preview("x", r, rate=v)["speed"] - 1.0) <= 0.0301
-                  for r in ("narrator", "old_male", "female") for v in (-30, -10, 0, 10, 30)),
-              "화자·설정별 속도 편차가 0.03 을 넘음")
-        check("v2 속도 상수", T.SPEED_TOLERANCE == 0.03 and T.uniform_speed(0) == 1.0
-              and T.uniform_speed(50) == 1.03 and T.uniform_speed(-50) == 0.97,
-              f"{T.SPEED_TOLERANCE} {T.uniform_speed(0)} {T.uniform_speed(50)} {T.uniform_speed(-50)}")
+        check("speed 균일화(-10% → 0.90)", sp_slow == 0.90, str(sp_slow))
+        check("화자별 속도 편차 없음(같은 설정이면 같은 값)",
+              all(len({T.openai_payload_preview("x", r, rate=v)["speed"]
+                       for r in ("narrator", "old_male", "female")}) == 1
+                  for v in (-30, -15, 0, 15, 30)),
+              "화자별 속도가 다름")
+        check("v2 속도 상수", T.SPEED_RANGE == 0.15 and T.uniform_speed(0) == 1.0
+              and T.uniform_speed(50) == 1.15 and T.uniform_speed(-50) == 0.85,
+              f"{T.SPEED_RANGE} {T.uniform_speed(0)} {T.uniform_speed(50)} {T.uniform_speed(-50)}")
 
         fake.calls.clear()
         data = T.synthesize_openai_chunk("꽃이 피었습니다.", "ash", 1.0, "노인처럼", "gpt-4o-mini-tts", secret)

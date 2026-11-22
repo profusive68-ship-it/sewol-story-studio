@@ -78,8 +78,12 @@ def main() -> int:
     print("== 1. 버전 · 문서 · Python 3.9 ==")
     disk = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     init_src = (ROOT / "app" / "__init__.py").read_text(encoding="utf-8")
-    check("VERSION == 2.0.0", disk == "2.0.0", disk)
-    check("app.__version__ == 2.0.0", '"2.0.0"' in init_src, init_src.strip().splitlines()[-1])
+    try:
+        ver_tuple = tuple(int(x) for x in disk.split(".")[:3])
+    except Exception:
+        ver_tuple = (0,)
+    check("VERSION 이 2.0.0 이상", ver_tuple >= (2, 0, 0), disk)
+    check("app.__version__ 가 VERSION 과 같다", f'"{disk}"' in init_src, init_src.strip().splitlines()[-1])
     readme = (ROOT / "README_맥북설치방법.txt").read_text(encoding="utf-8")
     check("설명서 머리말 버전 일치", f"(v{disk})" in readme.splitlines()[1], readme.splitlines()[1])
     for probe in ("4단계 스튜디오", "시나리오 추천받기", "목소리 분배", "목소리 배정",
@@ -137,10 +141,10 @@ def main() -> int:
 
     print("== 3. 속도 균일화 · 해설/인물 목소리 분리 ==")
     check("기준 속도 1.00", T.NARRATION_SPEED == 1.00, str(T.NARRATION_SPEED))
-    check("허용 편차 ±0.03", T.SPEED_TOLERANCE == 0.03, str(T.SPEED_TOLERANCE))
-    check("uniform_speed 경계", (T.uniform_speed(0), T.uniform_speed(100), T.uniform_speed(-100))
-          == (1.0, 1.03, 0.97), str((T.uniform_speed(0), T.uniform_speed(100), T.uniform_speed(-100))))
-    check("uniform_rate ±3%", (T.uniform_rate(0), T.uniform_rate(40), T.uniform_rate(-40)) == (0, 3, -3),
+    check("화자 사이 허용 편차 ±0.03", T.SPEED_TOLERANCE == 0.03, str(T.SPEED_TOLERANCE))
+    check("uniform_speed 경계(±15%)", (T.uniform_speed(0), T.uniform_speed(100), T.uniform_speed(-100))
+          == (1.0, 1.15, 0.85), str((T.uniform_speed(0), T.uniform_speed(100), T.uniform_speed(-100))))
+    check("uniform_rate ±15%", (T.uniform_rate(0), T.uniform_rate(40), T.uniform_rate(-40)) == (0, 15, -15),
           str((T.uniform_rate(0), T.uniform_rate(40), T.uniform_rate(-40))))
     rule = T.with_speed_rule("연기 지시")
     check("지시문에 극단 속도 금지", "극단적으로 빠르거나 느리" in rule, rule[:80])

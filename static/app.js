@@ -63,6 +63,13 @@ const EMOTION_LABEL = { conflict: "갈등", twist: "반전", heal: "치유" };
 const PLACEMENT_LABEL = { after_hook: "되감기 카드", teaser: "후속편 예고", mid: "좋아요 멘트", end: "구독·지역 인사" };
 const STEP_TITLES = { 1: "1단계 · 대본 설계·검토", 2: "2단계 · 이미지·음성 검토", 3: "3단계 · 영상 렌더링", 4: "4단계 · 최종 확인·업로드" };
 
+// 낭독 속도 표시 — 모든 화자에게 같은 속도가 적용된다(±15%, 0.85x~1.15x)
+function rateText(v) {
+  const n = Number(v || 0);
+  const x = (1 + n / 100).toFixed(2);
+  return `${n > 0 ? "+" : ""}${n}% (x${x})`;
+}
+
 function toast(msg, bad = false) {
   const t = $("#toast");
   t.textContent = msg;
@@ -272,7 +279,7 @@ function restoreLocal() {
     $("#voiceMode").value = d.voiceMode || "multi";
     $("#storyTone").value = d.tone || "warm";
     $("#rate").value = d.rate ?? 0;
-    $("#rateOut").textContent = ($("#rate").value || 0) + "%";
+    $("#rateOut").textContent = rateText($("#rate").value);
     $("#avatar").checked = d.avatar !== false;
     $("#avatarKind").value = d.avatarKind || "auto";
     $("#liveBadge").checked = d.liveBadge !== false;
@@ -2145,7 +2152,7 @@ function bind() {
   $("#btnScriptRead").addEventListener("click", () => CURRENT && openScriptRead(CURRENT.id));
   $("#btnScriptEdit").addEventListener("click", () => CURRENT && openScriptEditor(CURRENT.id));
 
-  $("#rate").addEventListener("input", () => { $("#rateOut").textContent = $("#rate").value + "%"; saveLocal(); });
+  $("#rate").addEventListener("input", () => { $("#rateOut").textContent = rateText($("#rate").value); saveLocal(); });
   $("#btnAvatarFile").addEventListener("click", () => $("#avatarFile").click());
   $("#avatarFile").addEventListener("change", () => {
     if ($("#avatarFile").files.length) {

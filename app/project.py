@@ -7,12 +7,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .gemini_script import (ENGINE_LABELS, SPEAKERS, SFX_VOCAB, candidate_engines, engine_tag,
+from .gemini_script import (ENGINE_LABELS, SFX_VOCAB, candidate_engines, engine_tag,
                             generate_script, no_engine_message, normalize_script)
 from .paths import project_dir
 from .script_templates import build_template_script
-from .settings import (FORMAT_PRESETS, GENRES, SPEAKER_LABELS, STORY_TONES, SUBTITLE_SIZES,
-                       load_config)
+from .settings import (FORMAT_PRESETS, GENRES, SPEAKER_LABELS, SPEED_RATE_MAX, SPEED_RATE_MIN,
+                       STORY_TONES, SUBTITLE_SIZES, load_config)
+from .speakers import resolve_speaker
 
 SCHEMA = "sewol-project/1"
 CHARS_PER_SEC = 4.3
@@ -124,7 +125,7 @@ def create_project(payload: dict, progress=None) -> dict:
         "sequel": bool(payload.get("sequel", True)),
         "voice_mode": payload.get("voice_mode") or "multi",
         "tone": payload.get("tone") or "warm",
-        "rate": max(-5, min(10, int(payload.get("rate") or 0))),
+        "rate": max(SPEED_RATE_MIN, min(SPEED_RATE_MAX, int(payload.get("rate") or 0))),
         "subtitle_size": payload.get("subtitle_size") or "senior",
         "avatar": bool(payload.get("avatar", True)),
         "avatar_kind": payload.get("avatar_kind") or "auto",
@@ -285,6 +286,12 @@ def _prepare_scenes(script: dict, settings: dict) -> dict:
         sc.setdefault("emotion", "heal")
         sc.setdefault("sfx", [])
         sc.setdefault("speaker", "narrator")
+        # 예시 대본·AI 대본 모두 화자 표기를 표준 배역으로 맞춘다(어머니·며느리·son → 배역)
+        role, name = resolve_speaker(sc.get("speaker"), script.get("characters"),
+                                     age=sc.get("speaker_age"), gender=sc.get("speaker_gender"))
+        sc["speaker"] = role
+        if name:
+            sc["speaker_name"] = name
 
     # 되감기 카드: 훅 바로 뒤
     if settings.get("hook15") and not any(s.get("placement") == "after_hook" for s in scenes):
@@ -824,7 +831,9 @@ def read_script_view(project: dict) -> dict:
             "scenes": [{
                 "id": sc.get("id"),
                 "speaker": sc.get("speaker", "narrator"),
-                "speaker_label": SPEAKER_LABELS.get(sc.get("speaker", "narrator"), sc.get("speaker", "")),
+                "speaker_label": (str(sc.get("speaker_name") or "").strip()
+                                  or SPEAKER_LABELS.get(sc.get("speaker", "narrator"),
+                                                        sc.get("speaker", ""))),
                 "text": sc.get("text", ""),
                 "emotion": sc.get("emotion", "heal"),
                 "placement": sc.get("placement", ""),
@@ -942,7 +951,11 @@ def save_edited_script(project: dict, incoming, title=None) -> dict:
             changed += 1
         sc["text"] = text
         speaker = str(raw.get("speaker") or sc.get("speaker") or "narrator").strip()
-        sc["speaker"] = speaker if speaker in SPEAKERS else "narrator"
+        role, name = resolve_speaker(speaker, project.get("characters"),
+                                     age=sc.get("speaker_age"), gender=sc.get("speaker_gender"))
+        sc["speaker"] = role
+        if name:
+            sc["speaker_name"] = name
         emotion = str(raw.get("emotion") or sc.get("emotion") or "heal").strip()
         sc["emotion"] = emotion if emotion in ("conflict", "twist", "heal") else "heal"
         if "speaker_tone" in raw:

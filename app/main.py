@@ -41,7 +41,7 @@ from .settings import (AVATAR_GENDERS, AVATAR_KINDS, AVATAR_SIZE_PX, DEFAULT_GIT
                        SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, STORY_TONES, load_config, public_config,
                        save_config,
                        BREATH_GAP_MAX, BREATH_GAP_MIN, BREATH_GAP_SECONDS, NARRATION_SPEED,
-                       SPEED_TOLERANCE)
+                       SPEED_RANGE, SPEED_RATE_MAX, SPEED_RATE_MIN, SPEED_TOLERANCE)
 from .tts import (breath_gap, build_voice_plan, clip_path, preview_dir, preview_path,
                   project_voice_plan, separation_violations, speed_values,
                   synthesize_line_preview, synthesize_sync, test_openai_tts, voice_report,
@@ -219,6 +219,8 @@ def meta():
         ],
         "voice_standard": {
             "speed": NARRATION_SPEED, "tolerance": SPEED_TOLERANCE,
+            "range": SPEED_RANGE, "rate_min": SPEED_RATE_MIN, "rate_max": SPEED_RATE_MAX,
+            "uniform": "모든 화자에게 같은 속도가 적용됩니다 (균일 속도 유지)",
             "breath_gap": BREATH_GAP_SECONDS, "min": BREATH_GAP_MIN, "max": BREATH_GAP_MAX,
             "openai_voices": list(OPENAI_TTS_MODELS.keys()),
         },

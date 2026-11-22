@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>세월의 사연극장 · 4단계 스튜디오</title>
-<link rel="stylesheet" href="/static/style.css?v=2.0.1">
+<link rel="stylesheet" href="/static/style.css?v=2.0.2">
 </head>
 <body>
 <header class="top">
   <div class="brand">
     <div class="mark">歲</div>
     <div>
-      <h1>세월의 사연극장 <span class="ver" id="verTag">v2.0.1</span></h1>
+      <h1>세월의 사연극장 <span class="ver" id="verTag">v2.0.2</span></h1>
       <p>4단계 스튜디오 · 대본 → 이미지·음성 → 렌더링 → 확인·업로드</p>
     </div>
   </div>
@@ -95,9 +95,10 @@
               <option value="tense">처절하고 긴장감 있는 (미스터리)</option>
               <option value="sassy">통쾌한 사이다 (시댁·갑질 반전)</option>
             </select>
-            <label class="label" for="rate">낭독 속도 <output id="rateOut">0%</output></label>
-            <input type="range" id="rate" min="-5" max="10" step="1" value="0">
-            <p class="hint small">모든 화자에게 <b>같은 속도</b>가 적용됩니다(±3% 안에서만 조절, v2.0.0). 시니어 사연은 0%를 권합니다.</p>
+            <label class="label" for="rate">낭독 속도 <output id="rateOut">0% (x1.00)</output></label>
+            <input type="range" id="rate" min="-15" max="15" step="1" value="0">
+            <p class="hint small">🎚️ <b>모든 화자에게 같은 속도가 적용됩니다 (균일 속도 유지)</b> — 해설·인물·노인이 함께
+              빨라지거나 느려집니다. 조절 폭은 0.85배 ~ 1.15배(±15%)이고, 시니어 사연은 0%를 권합니다.</p>
           </div>
           <div>
             <label class="label">우측 하단 원형 진행자 · <b>290px</b> 라디오 DJ</label>
@@ -670,6 +671,6 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
-<script src="/static/app.js?v=2.0.1"></script>
+<script src="/static/app.js?v=2.0.2"></script>
 </body>
 </html>
