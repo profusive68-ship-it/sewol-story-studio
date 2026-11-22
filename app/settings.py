@@ -11,6 +11,12 @@ DEFAULT_GITHUB_REPO = "profusive68-ship-it/sewol-story-studio"
 
 DEFAULT_CONFIG = {
     "gemini_api_key": "",
+    # 음성 엔진: edge(무료·기본) | openai(감성 TTS·유료)
+    "tts_engine": "edge",
+    "openai_api_key": "",
+    "openai_tts_model": "gpt-4o-mini-tts",
+    # OpenAI 키가 없거나 호출이 실패해도 제작이 멈추지 않게 edge-tts로 대체
+    "openai_fallback_edge": True,
     "text_model": "gemini-3.8-flash",
     "text_model_fallbacks": ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"],
     "image_model": "gemini-2.5-flash-image",
@@ -89,6 +95,16 @@ GENRES = {
     },
 }
 
+TTS_ENGINES = {
+    "openai": "OpenAI 감성 TTS (추천 · 유료)",
+    "edge": "무료 edge-tts (기본 · 0원)",
+}
+
+OPENAI_TTS_MODELS = {
+    "gpt-4o-mini-tts": "gpt-4o-mini-tts (감정 연기 지시 지원 · 추천)",
+    "tts-1-hd": "tts-1-hd (가성비 · 연기 지시 없음)",
+}
+
 VOICE_MODES = {
     "multi": "다중 성우 라디오 드라마 (InJoon 해설 + BongJin 노인 + SunHi 여성 자동 분리)",
     "male": "단일 남성 낭독",
@@ -150,6 +166,13 @@ def load_config() -> dict:
     env_key = os.environ.get("GEMINI_API_KEY")
     if env_key and not cfg.get("gemini_api_key"):
         cfg["gemini_api_key"] = env_key
+    env_openai = os.environ.get("OPENAI_API_KEY")
+    if env_openai and not cfg.get("openai_api_key"):
+        cfg["openai_api_key"] = env_openai
+    engine = str(cfg.get("tts_engine") or "edge").strip().lower()
+    cfg["tts_engine"] = engine if engine in TTS_ENGINES else "edge"
+    model = str(cfg.get("openai_tts_model") or "gpt-4o-mini-tts").strip()
+    cfg["openai_tts_model"] = model if model in OPENAI_TTS_MODELS else "gpt-4o-mini-tts"
     return cfg
 
 
@@ -167,13 +190,31 @@ def save_config(patch: dict) -> dict:
     return cfg
 
 
+def mask_secret(value: str) -> str:
+    """비밀키는 앞뒤 몇 글자만 보여 주고 가운데를 가린다."""
+    v = (value or "").strip()
+    if not v:
+        return ""
+    if len(v) > 12:
+        return v[:6] + "••••••••" + v[-4:]
+    return "✓ 저장됨"
+
+
 def public_config() -> dict:
     cfg = load_config()
     key = cfg.get("gemini_api_key") or ""
     gh = (cfg.get("github_token") or "").strip()
+    okey = (cfg.get("openai_api_key") or "").strip()
     return {
         "has_key": bool(key),
-        "key_masked": (key[:6] + "••••••••" + key[-4:]) if len(key) > 12 else ("✓ 저장됨" if key else ""),
+        "key_masked": mask_secret(key),
+        "tts_engine": cfg.get("tts_engine", "edge"),
+        "openai_tts_model": cfg.get("openai_tts_model", "gpt-4o-mini-tts"),
+        "has_openai_key": bool(okey),
+        "openai_key_masked": mask_secret(okey),
+        "openai_fallback_edge": bool(cfg.get("openai_fallback_edge", True)),
+        "tts_engines": TTS_ENGINES,
+        "openai_tts_models": OPENAI_TTS_MODELS,
         "text_model": cfg["text_model"],
         "image_model": cfg["image_model"],
         "encoder": cfg["encoder"],

@@ -1,5 +1,5 @@
 세월의 사연극장 — 맥북 원클릭 자동화 패키지
-설치 및 사용 설명서 (v1.2.0)
+설치 및 사용 설명서 (v1.2.1)
 ======================================================================
 
 이 폴더 하나로 ‘사연 라디오 드라마’ 한 편을 끝까지 만듭니다.
@@ -18,6 +18,8 @@
 · ffmpeg           →  터미널에서  brew install ffmpeg
    (Homebrew 가 없다면 https://brew.sh 안내대로 먼저 설치)
 · Gemini API 키(선택) → https://aistudio.google.com → Get API key
+· OpenAI API 키(선택) → https://platform.openai.com/api-keys → Create new secret key
+   (감성 TTS 로 성우 목소리를 더 사람답게 만들 때만 · 유료)
 · 유튜브 자동 업로드(선택) → Google Cloud 에서 client_secret.json 발급 (아래 6장)
 
 
@@ -75,6 +77,24 @@ assets_inbox/ 는 케빈이 이미지를 올리는 공유 폴더라 깃허브에
 [0] Gemini API 설정
     키를 붙여넣고 [저장] → [연결 테스트].
     키는 이 맥북 config/config.json 에만 저장됩니다.
+
+[0-1] 음성 엔진 (감성 TTS) — v1.2.1
+    [🎙️ 음성 엔진 (감성 TTS)] 카드에서 성우 목소리를 만드는 엔진을 고릅니다.
+     ● OpenAI 감성 TTS (추천·유료): 대사마다 감정 연기 지시를 넣어 훨씬 사람처럼 읽습니다.
+        · OpenAI API 키를 붙여넣고 [저장] → [연결 테스트] (짧은 한국어 한 문장을 실제로
+          만들어 보고 🔊 미리듣기로 바로 들어볼 수 있습니다)
+        · 모델: gpt-4o-mini-tts(감정 연기 지원·추천) / tts-1-hd(가성비·연기 지시 없음)
+        · 배역은 자동 매핑: 해설 onyx · 노인 ash · 할머니 sage · 여성 coral · 청년 echo · 아이 nova
+        · 비용은 편당 몇백 원 수준입니다(대사 분량에 따라 다름).
+     ● 무료 edge-tts (기본·0원): 설치 없이 바로. InJoon·SunHi 음성.
+     · [OpenAI 실패 시 무료 edge-tts로 자동 대체] 를 켜 두면 키가 없거나 사용 한도·
+       오류일 때도 제작이 멈추지 않고, 사연 화면에 안내가 남습니다.
+     · 안내: OpenAI 의 음성 모델(gpt-4o-mini-tts · tts-1-hd)은 2027-01-06 에
+       서비스가 종료될 예정입니다(OpenAI 공지). 그 뒤에는 자동으로 무료 edge-tts 로
+       제작되며, 대체 모델(gpt-realtime-2.1-mini)은 다른 방식(Realtime API)이라
+       그때 맞춰 새로 연결해야 합니다.
+     · 엔진을 바꾸면 다음 [영상 조립]부터 적용됩니다. 이미 만든 음성은 다시 쓰지 않고
+       새로 만듭니다(캐시에 engine·model 이 함께 기록되어 서로 섞이지 않습니다).
 
 [1] 사연 & 포맷
     · 사연 종류 5가지 / 주제 직접 입력
@@ -267,6 +287,7 @@ assets_inbox/                    ← 케빈이 보내온 이미지 (깃허브 �
 tools/launchd_설치.command       ← 맥 시작 시 자동 실행
 tools/selftest_github_inbox.py   ← 깃허브 요청·자동 수신 셀프테스트 (선택)
 tools/selftest_v120.py           ← v1.2.0 기능(미리보기·수정요청·타임라인·재시작) 테스트 (선택)
+tools/selftest_v121.py           ← v1.2.1 OpenAI 감성 TTS 연동 테스트 (선택)
 config/                          ← 내 설정 (백업 대상, 깃허브 제외)
 projects/                        ← 내 사연 (백업 대상, 깃허브 제외)
   사연번호/
@@ -289,6 +310,8 @@ projects/                        ← 내 사연 (백업 대상, 깃허브 제외
 ▶ “이미지 N장이 없습니다” → 모드 B는 이미지가 모두 있어야 조립합니다.
    이름은 s01.png, s02.png … (요청서와 동일)
 ▶ 성우 음성이 안 나와요 → edge-tts 는 인터넷 필요. 이미 만든 음성은 재사용됩니다.
+▶ OpenAI 감성 TTS 가 안 돼요 → [연결 테스트]로 이유를 확인하세요. 401은 키 오류,
+   429는 사용 한도, 400은 모델·보이스 이름 문제입니다. 급하면 엔진을 '무료 edge-tts'로.
 ▶ 자막이 네모로 보여요 → assets/fonts/GmarketSansBold.ttf 확인
 ▶ 렌더가 오래 걸려요 → 40분 본편은 맥 사양에 따라 40~90분. 창을 닫지 마세요.
    Apple Silicon 은 하드웨어 가속(h264_videotoolbox) 자동 사용.

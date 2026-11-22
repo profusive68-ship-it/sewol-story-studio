@@ -140,7 +140,7 @@ def main() -> int:
     print("== 1. 버전 ==")
     disk = (BASE / "VERSION").read_text(encoding="utf-8").strip()
     check("VERSION == app.__version__", disk == pkg_version, f"{disk} / {pkg_version}")
-    check("버전이 1.2.0", disk == "1.2.0", disk)
+    check("버전이 1.2.0 이상", tuple(int(x) for x in disk.split(".") if x.isdigit()) >= (1, 2, 0), disk)
 
     print("== 2. Gemini 재시도·폴백 ==")
 

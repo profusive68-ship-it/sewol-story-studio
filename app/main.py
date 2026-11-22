@@ -26,15 +26,17 @@ from .compile_parts import compile_weekend
 from .ffmpeg_util import FFmpegMissing, ffmpeg_exe, version as ffmpeg_version
 from .gemini_images import generate_images
 from .gemini_script import SYSTEM_RULES
-from .paths import ASSETS_DIR, BASE, PROJECTS_DIR, STATIC_DIR, ensure_dirs, project_dir
+from .paths import (ASSETS_DIR, BASE, PROJECTS_DIR, STATIC_DIR, ensure_dirs,
+                    project_dir)
 from .project import (CTA_SHORT, CTA_TEXT, LIKE_VOICE_SHORT, LIKE_VOICE_TEXT, build_timeline,
                       create_project, list_projects, load, missing_images, now, save, set_status,
                       write_image_request, write_upload_copy)
 from .pronunciation import ensure_pron_file
 from .render import detect_encoder, encoder_info, render_thumbnails, render_video
-from .settings import (AVATAR_KINDS, DEFAULT_GITHUB_REPO, FORMAT_PRESETS, GENRES, SUBTITLE_SIZES,
-                       VOICE_MODES, load_config, public_config, save_config)
-from .tts import synthesize_sync, voice_report
+from .settings import (AVATAR_KINDS, DEFAULT_GITHUB_REPO, FORMAT_PRESETS, GENRES, OPENAI_TTS_MODELS,
+                       SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, load_config, public_config,
+                       save_config)
+from .tts import preview_path, synthesize_sync, test_openai_tts, voice_report
 from . import youtube_upload as yt
 from . import strategy as st
 from . import comments as cm
@@ -177,6 +179,8 @@ def meta():
         "genres": [{"key": k, **v} for k, v in GENRES.items()],
         "presets": [{"key": k, **v} for k, v in FORMAT_PRESETS.items()],
         "voice_modes": VOICE_MODES,
+        "tts_engines": TTS_ENGINES,
+        "openai_tts_models": OPENAI_TTS_MODELS,
         "subtitle_sizes": {k: {"px": v[0], "label": v[1]} for k, v in SUBTITLE_SIZES.items()},
         "avatar_kinds": AVATAR_KINDS,
         "config": public_config(),
@@ -204,23 +208,40 @@ class ConfigIn(BaseModel):
     keep_segments: bool | None = None
     github_token: str | None = None
     github_repo: str | None = None
+    tts_engine: str | None = None
+    openai_api_key: str | None = None
+    openai_tts_model: str | None = None
+    openai_fallback_edge: bool | None = None
 
 
 @app.post("/api/config")
 def set_config(body: ConfigIn):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("gemini_api_key", "github_token"):
+    for k in ("gemini_api_key", "github_token", "openai_api_key"):
         if k in patch:
             patch[k] = (patch[k] or "").strip()
     if "github_repo" in patch:
         patch["github_repo"] = (patch["github_repo"] or "").strip() or DEFAULT_GITHUB_REPO
+    if "tts_engine" in patch:
+        engine = str(patch["tts_engine"] or "").strip().lower()
+        patch["tts_engine"] = engine if engine in TTS_ENGINES else "edge"
+    if "openai_tts_model" in patch:
+        model = str(patch["openai_tts_model"] or "").strip()
+        patch["openai_tts_model"] = model if model in OPENAI_TTS_MODELS else "gpt-4o-mini-tts"
     save_config(patch)
     return public_config()
 
 
+class ConfigTestIn(BaseModel):
+    engine: str | None = None          # gemini(기본) | openai_tts
+
+
 @app.post("/api/config/test")
-def test_config():
+def test_config(body: ConfigTestIn | None = None):
+    target = str((body.engine if body else "") or "gemini").strip().lower()
     cfg = load_config()
+    if target in ("openai_tts", "openai", "tts"):
+        return test_openai_tts(cfg)
     if not (cfg.get("gemini_api_key") or "").strip():
         return {"ok": False, "error": "API 키가 저장되어 있지 않습니다."}
     try:
@@ -230,6 +251,16 @@ def test_config():
         return {"ok": True, "message": (text or "").strip()[:40] or "연결 성공"}
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
+
+
+@app.get("/api/tts/preview")
+def tts_preview():
+    """[연결 테스트]에서 만든 짧은 미리듣기 mp3."""
+    path = preview_path()
+    if not path.exists() or path.stat().st_size < 500:
+        raise HTTPException(404, "미리듣기 음성이 없습니다. [연결 테스트]를 먼저 눌러 주세요.")
+    return FileResponse(str(path), media_type="audio/mpeg",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ── 프로젝트 ──────────────────────────────────────────────────────────────

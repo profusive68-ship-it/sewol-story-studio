@@ -196,6 +196,7 @@ async function loadMeta() {
     $("#ctaText").placeholder = "기본: " + m.defaults.cta_text;
   }
   if (conf.has_key && conf.key_masked) $("#apiMsg").textContent = `저장된 키: ${conf.key_masked} · 모델 ${conf.text_model}`;
+  applyTtsConfig(conf);
   if (conf.youtube_privacy !== undefined) {
     const p = conf.youtube_privacy || "private";
     $("#ytPrivacy").value = p === "private" && conf.youtube_publish_at ? "scheduled" : p;
@@ -248,6 +249,81 @@ async function testKey() {
       toast("연결 실패: " + (r.error || ""), true);
     }
   } catch (e) { toast(e.message, true); }
+}
+
+// ── 음성 엔진 (OpenAI 감성 TTS / 무료 edge-tts) ─────────────────────────────
+function applyTtsConfig(conf) {
+  conf = conf || {};
+  const engine = conf.tts_engine === "openai" ? "openai" : "edge";
+  if ($("#ttsEngine")) $("#ttsEngine").value = engine;
+  if ($("#openaiModel")) $("#openaiModel").value = conf.openai_tts_model || "gpt-4o-mini-tts";
+  if ($("#ttsFallback")) $("#ttsFallback").checked = conf.openai_fallback_edge !== false;
+  const badge = $("#ttsBadge");
+  if (badge) {
+    badge.textContent = engine === "openai"
+      ? (conf.has_openai_key ? "OpenAI 감성 TTS · 키 저장됨" : "OpenAI 감성 TTS · 키 없음")
+      : "무료 edge-tts";
+    badge.className = "badge " + (engine === "openai" && conf.has_openai_key ? "on" : "");
+  }
+  const msg = $("#ttsMsg");
+  if (msg && conf.has_openai_key && conf.openai_key_masked) {
+    msg.innerHTML = `저장된 OpenAI 키: ${esc(conf.openai_key_masked)} · 모델 ${esc(conf.openai_tts_model || "")}`
+      + ` · <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a> 에서 새 키 발급`;
+  }
+}
+
+async function saveTts(silent = false) {
+  const body = {
+    tts_engine: $("#ttsEngine").value,
+    openai_tts_model: $("#openaiModel").value,
+    openai_fallback_edge: $("#ttsFallback").checked,
+  };
+  const key = $("#openaiKey").value.trim();
+  if (key) body.openai_api_key = key;
+  try {
+    const conf = await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("#openaiKey").value = "";
+    applyTtsConfig(conf);
+    if (silent) return;
+    if (conf.tts_engine === "openai" && !conf.has_openai_key) {
+      toast("저장했습니다. OpenAI API 키를 넣어야 감성 TTS 로 제작됩니다.", true);
+    } else if (conf.tts_engine === "openai") {
+      toast("OpenAI 감성 TTS 로 저장했습니다.");
+    } else {
+      toast("무료 edge-tts 로 저장했습니다.");
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function testTts() {
+  const btn = $("#btnTtsTest");
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "확인 중…";
+  $("#ttsPreview").textContent = "OpenAI 에 짧은 한국어 문장을 보내 목소리를 만드는 중입니다 (3~10초)…";
+  try {
+    const r = await api("/api/config/test", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ engine: "openai_tts" }),
+    });
+    if (r.ok) {
+      $("#ttsPreview").innerHTML = `✅ ${esc(r.message)}`
+        + (r.preview_url ? ` · <a href="${esc(r.preview_url)}" target="_blank" rel="noopener">🔊 미리듣기</a>` : "");
+      toast("OpenAI 감성 TTS 연결 성공");
+    } else {
+      $("#ttsPreview").innerHTML = `❌ ${esc(r.error || "연결하지 못했습니다.")}`;
+      toast("연결 실패: " + (r.error || ""), true);
+    }
+  } catch (e) {
+    $("#ttsPreview").textContent = "연결 실패 — " + e.message;
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
 }
 
 // ── 만들기 ───────────────────────────────────────────────────────────────
@@ -1364,6 +1440,11 @@ function showCompileResult(r) {
 
 function bind() {
   $("#btnSaveKey").addEventListener("click", saveKey);
+  $("#btnTtsSave").addEventListener("click", () => saveTts());
+  $("#btnTtsTest").addEventListener("click", testTts);
+  ["ttsEngine", "openaiModel", "ttsFallback"].forEach((id) => {
+    $("#" + id)?.addEventListener("change", () => saveTts(true));
+  });
   $("#btnStrategy").addEventListener("click", analyzeStrategy);
   $("#btnPinSave").addEventListener("click", savePin);
   $("#caffeinate").addEventListener("change", toggleCaffeinate);
