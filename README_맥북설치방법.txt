@@ -393,6 +393,7 @@ tools/selftest_v122.py           ← v1.2.2 진행자 확대·LIVE 배지·인�
 tools/selftest_v123.py           ← v1.2.3 반측면 성우 사진·발화 모션 테스트 (선택)
 tools/selftest_v125.py           ← v1.2.5 OpenAI 자동 보조·대본 수정·재제작 테스트 (선택)
 tools/selftest_v200.py           ← v2.0.0 4단계 스튜디오·성우 분리·속도 균일·무중단 수신 테스트 (선택)
+tools/selftest_v202.py           ← v2.0.2 인물 화자 자동 배정·속도 ±15% 테스트 (선택)
 tools/smoke_ui_v200.py           ← 화면(app.js) 동작 스모크 테스트 — quickjs 있으면 실행 (선택)
 config/                          ← 내 설정 (백업 대상, 깃허브 제외)
 projects/                        ← 내 사연 (백업 대상, 깃허브 제외)
