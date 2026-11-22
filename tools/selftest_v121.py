@@ -124,7 +124,7 @@ def main() -> int:
     print("== 1. 버전 ==")
     disk = (BASE / "VERSION").read_text(encoding="utf-8").strip()
     check("VERSION == app.__version__", disk == pkg_version, f"{disk} / {pkg_version}")
-    check("버전이 1.2.1", disk == "1.2.1", disk)
+    check("버전이 1.2.1 이상", tuple(int(x) for x in disk.split(".") if x.isdigit()) >= (1, 2, 1), disk)
     req = (BASE / "requirements.txt").read_text(encoding="utf-8")
     check("requirements.txt 에 requests", "requests>=2.31" in req, req[-60:])
 
@@ -132,7 +132,7 @@ def main() -> int:
     h = client.get("/api/health")
     check("GET /api/health 200", h.status_code == 200 and h.json().get("ok") in (True, False),
           h.text[:200])
-    check("health.version == 1.2.1", h.json().get("version") == "1.2.1", str(h.json())[:200])
+    check("health.version == VERSION", h.json().get("version") == disk, str(h.json())[:200])
     cfg0 = client.get("/api/config")
     check("GET /api/config 200", cfg0.status_code == 200, cfg0.text[:200])
     c0 = cfg0.json()

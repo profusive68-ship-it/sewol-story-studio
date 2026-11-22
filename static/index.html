@@ -153,19 +153,24 @@
           <p class="hint small">-5%는 더 천천히, +10%는 더 빠르게. 시니어 사연은 0%를 권합니다.</p>
         </div>
         <div>
-          <label class="label">우측 하단 원형 진행자</label>
+          <label class="label">우측 하단 원형 진행자 · <b>290px</b> 라디오 DJ</label>
           <label class="switch tight"><input type="checkbox" id="avatar" checked><span></span>
-            <div><b>진행자 아바타 표시</b><small>남/여 기본 아바타 또는 내 사진</small></div>
+            <div><b>진행자 아바타 표시</b><small>나레이션 성별에 맞는 남/여 스튜디오 DJ 또는 내 사진</small></div>
           </label>
           <div class="row">
             <select id="avatarKind">
-              <option value="female">여성 진행자 (기본)</option>
-              <option value="male">남성 진행자 (기본)</option>
+              <option value="auto">자동 (나레이션 목소리 따라가기)</option>
+              <option value="female">여성 라디오 진행자</option>
+              <option value="male">남성 라디오 진행자</option>
               <option value="custom">내 사진 사용</option>
             </select>
             <input type="file" id="avatarFile" accept="image/*" hidden>
             <button class="btn ghost small" id="btnAvatarFile">사진 선택</button>
           </div>
+          <label class="switch tight"><input type="checkbox" id="liveBadge" checked><span></span>
+            <div><b>● LIVE 표시</b><small>아바타 위 ON-AIR 배지 · 0.8초 붉은 점 점멸</small></div>
+          </label>
+          <p class="hint small">진행자는 6초마다 1.6초 동안 아주 살짝 숨쉬듯 움직입니다. 멈춘 사진처럼 보이지 않게.</p>
           <label class="label">자막 크기</label>
           <div class="seg" id="subSize">
             <label><input type="radio" name="subSize" value="senior" checked><span>시니어 특대 (92px)</span></label>

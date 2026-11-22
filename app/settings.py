@@ -113,7 +113,45 @@ VOICE_MODES = {
 
 SUBTITLE_SIZES = {"senior": (92, "시니어 특대"), "basic": (70, "기본")}
 
-AVATAR_KINDS = {"female": "여성 진행자", "male": "남성 진행자", "custom": "내 사진"}
+# ── 진행자(나레이션 호스트) ──────────────────────────────────────────────────
+# 1080p 짧은 변 기준 27% ≈ 290px. 시니어 시청자도 한눈에 얼굴을 알아볼 크기.
+AVATAR_SIZE_RATIO = 0.27
+AVATAR_SIZE_PX = 290
+LIVE_BADGE_DEFAULT = True
+LIVE_BADGE_PERIOD = 0.8          # 붉은 점 깜빡임 주기(초)
+AVATAR_MOTION_CYCLE = 6.0        # 6초마다
+AVATAR_MOTION_SECONDS = 1.6      # 1.6초 동안만 살짝 움직임
+
+AVATAR_KINDS = {
+    "auto": "자동 (나레이션 목소리 따라가기)",
+    "female": "여성 라디오 진행자",
+    "male": "남성 라디오 진행자",
+    "custom": "내 사진",
+}
+AVATAR_GENDERS = {"male": "남성", "female": "여성"}
+
+# 나레이션(해설) 목소리 기준 성별. OpenAI·edge 모두 해설자는 남성(onyx / InJoon)이고,
+# 여성 단독 낭독일 때만 여성 진행자가 자연스럽다.
+_NARRATOR_VOICE_GENDER = {
+    "ko-KR-InJoonNeural": "male", "ko-KR-HyunsuMultilingualNeural": "male",
+    "ko-KR-SunHiNeural": "female",
+    "onyx": "male", "ash": "male", "echo": "male",
+    "coral": "female", "sage": "female", "nova": "female",
+}
+
+
+def narrator_gender(options: dict | None = None, cfg: dict | None = None) -> str:
+    """지금 설정으로 낭독(해설)을 맡는 목소리의 성별 → 진행자 성별."""
+    opt = options or {}
+    mode = str(opt.get("voice_mode") or "multi").lower()
+    if mode == "female":
+        return "female"
+    if mode == "male":
+        return "male"
+    conf = cfg or {}
+    engine = str(conf.get("tts_engine") or "edge").strip().lower()
+    voice = ("onyx" if engine == "openai" else VOICE_MAP["narrator"]["multi"])
+    return _NARRATOR_VOICE_GENDER.get(voice, "male")
 
 # 성우 배역. 한국어 edge-tts 음성은 현재 InJoon / Hyunsu / SunHi 세 가지가 제공되므로
 # BongJin·SoonBok 은 없을 때 대체 음성(피치·속도 보정)으로 자동 폴백한다.

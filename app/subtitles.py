@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .graphics import font_path
 from .pronunciation import subtitle_text
-from .settings import SUBTITLE_SIZES
+from .settings import AVATAR_SIZE_RATIO, SUBTITLE_SIZES
 from PIL import ImageFont
 
 
@@ -91,6 +91,13 @@ def write_ass(project: dict, items: list[dict], path: Path, width: int, height: 
     size = max(28, int(round(base_px * scale)))
     margin_lr = int(width * 0.055)
     margin_v = int(height * 0.135)
+    # 세로 화면에서는 큰 진행자(하단 우측)와 자막이 겹치지 않게 자막 블록을 그 위로 올린다.
+    # 가로 화면(16:9)은 자막이 화면 가운데 좁게 놓여 모서리 진행자와 거의 겹치지 않는다.
+    if opt.get("avatar", True) and height > width:
+        av = max(160, int(min(width, height) * AVATAR_SIZE_RATIO) // 2 * 2)
+        am = max(16, int(min(width, height) * 0.032))
+        badge_h = int(width * 0.0215 * 1.62)
+        margin_v = max(margin_v, am + av + int(badge_h * 0.55) + int(height * 0.012))
     max_chars = max(10, min(14, int((width - margin_lr * 2) / (size * 1.02))))
 
     family = _family()

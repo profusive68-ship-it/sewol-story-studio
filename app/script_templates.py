@@ -2,10 +2,40 @@
 
 Gemini 없이도 '대본 → 이미지 요청서 → 영상' 전체 흐름을 끝까지 확인할 수 있게
 장르별 뼈대 이야기를 내장한다. (화면에는 '예시 대본'으로 표시된다)
+
+작가 지침 (v1.2.2):
+- 해설(narrator)만 길게 이어 쓰지 않고, 인물 간 직접 대화를 전체의 약 30~40% 비중으로 섞는다.
+- 인물 대사마다 speaker_age · speaker_gender · speaker_tone 를 붙여 음성 연기에 쓴다.
 """
 from __future__ import annotations
 
 from .settings import GENRES
+
+# 화자(예시 대본의 자유 이름)별 인물 정보 — 나이·성별·성격·처지.
+# 음성 합성(app/tts.py)이 이 정보로 목소리·피치·속도·연기 지시를 맞춘다.
+CHARACTER_META = {
+    "son": {"age": "40대 후반", "gender": "male", "tone": "서운함과 그리움이 뒤섞인 중년 아들"},
+    "mother": {"age": "70대 후반", "gender": "female", "tone": "다정하지만 기력이 약한 병상의 노모"},
+    "mil": {"age": "70대 후반", "gender": "female", "tone": "냉정하고 거만한 시어머니"},
+    "husband": {"age": "40대 중반", "gender": "male", "tone": "양쪽 사이에서 늘 눈치만 보는 남편"},
+    "wife": {"age": "30대 후반", "gender": "female", "tone": "십 년을 참아 온 조용한 며느리"},
+    "woman": {"age": "40대 초반", "gender": "female", "tone": "사진 속 비밀을 파헤치는 딸"},
+    "old": {"age": "80대", "gender": "male", "tone": "사십 년 전 첫사랑을 못 지킨 늙고 지친 노인"},
+    "sister": {"age": "50대 초반", "gender": "female", "tone": "병원비를 두고 계산적인 시누이"},
+    "lead": {"age": "50대 중반", "gender": "male", "tone": "주소 없는 편지를 받은 주인공"},
+    "other": {"age": "50대 중반", "gender": "female", "tone": "이십 년 전 미안함을 숨겨 온 사람"},
+}
+
+
+def attach_character_meta(scene: dict) -> dict:
+    """인물 대사 장면에 화자 정보를 붙인다(해설은 그대로)."""
+    speaker = str(scene.get("speaker") or "")
+    meta = CHARACTER_META.get(speaker)
+    if meta and speaker != "narrator":
+        scene.setdefault("speaker_age", meta["age"])
+        scene.setdefault("speaker_gender", meta["gender"])
+        scene.setdefault("speaker_tone", meta["tone"])
+    return scene
 
 # 각 장르: 인물 / 도입 이미지 / 비트 목록
 # 비트 = (화자, 대사, 감정, 효과음 리스트, 영어 이미지 프롬프트, 한국어 장면 설명)
@@ -19,7 +49,7 @@ STORIES: dict[str, dict] = {
              "desc_en": "Korean man in his late 40s, short graying hair, worn navy jacket, weary face"},
         ],
         "beats": [
-            ("narrator", "정호는 어머니가 돌아가신 뒤 삼 년 만에 그 집 문을 열었습니다.", "heal", ["문 삐걱"],
+            ("son", "삼 년 만이네. 엄마, 나 문 열어도 돼요?", "heal", ["문 삐걱"],
              "A middle-aged Korean man standing at the doorway of an old empty Korean house at dusk, dust in the air, warm fading light",
              "삼 년 만에 문을 연 낡은 집, 문틈으로 먼지가 흐른다"),
             ("narrator", "집 안은 그대로였습니다. 다만 모든 물건 위에 하얀 먼지가 앉아 있었습니다.", "heal", [],
@@ -31,7 +61,7 @@ STORIES: dict[str, dict] = {
             ("son", "어머니, 이건 왜 아직도 안 버리고 두셨어요.", "conflict", ["한숨"],
              "A middle-aged Korean man crouching in front of an old kimchi pot, hand on the lid, eyebrows drawn together",
              "김치통 뚜껑에 손을 얹은 아들, 표정이 굳는다"),
-            ("narrator", "뚜껑을 여는 순간, 정호는 그만 손을 멈추고 말았습니다.", "twist", ["뚜껑 열림", "심장박동"],
+            ("son", "잠깐… 이거, 뭐지. 뚜껑 안에 뭐가 있는데.", "twist", ["뚜껑 열림", "심장박동"],
              "Closeup of an old kimchi pot opening, revealing a small bundle wrapped in cloth inside, dramatic dim light",
              "뚜껑을 열자 안쪽에 정성껏 싼 보퉁이가 모습을 드러낸다"),
             ("narrator", "김치 대신, 비닐봉지에 겹겹이 싸인 봉투가 가지런히 놓여 있었습니다.", "twist", [],
@@ -46,7 +76,7 @@ STORIES: dict[str, dict] = {
             ("narrator", "편지에는 매달 오천 원씩, 정호의 이름으로 적금을 들어 준 기록이었습니다.", "twist", ["심장박동"],
              "Handwritten savings passbook pages spread on a wooden table, old Korean bank stamps, warm lamp light",
              "어머니가 매달 넣어 둔 아들 이름의 적금 기록"),
-            ("narrator", "정호가 회사를 그만두겠다고 했던 그 달에도, 어머니는 오천 원을 넣었습니다.", "twist", [],
+            ("son", "내가 그때 회사 관두겠다고 했을 때도… 육천 원씩 넣었어?", "twist", [],
              "A savings passbook with a deposit slip dated years ago, closeup, dusty table",
              "실직하던 달에도 빠지지 않은 오천 원"),
             ("son", "나 그때… 엄마한테 돈 달라고 한 번도 안 했는데.", "conflict", ["한숨"],
@@ -61,13 +91,13 @@ STORIES: dict[str, dict] = {
             ("mother", "엄마는 늘 네 뒤에서 같이 살고 있었단다.", "heal", [],
              "Faded family photograph of a mother and son in a small Korean yard, sunlight, soft focus",
              "오래된 가족사진 속, 아들 뒤에 서 있는 어머니"),
-            ("narrator", "정호는 그 자리에 한참을 앉아 있었습니다. 김치통을 끌어안은 채로.", "heal", ["심장박동"],
+            ("son", "엄마, 미안해. 전화 한 통이 그렇게 어려웠니.", "heal", ["심장박동"],
              "A middle-aged man sitting on the kitchen floor hugging an old kimchi pot, evening light through the window",
              "김치통을 끌어안은 채 부엌에 앉아 있는 아들"),
             ("narrator", "그날 저녁, 정호는 처음으로 혼자 김치를 담갔습니다. 어머니처럼, 소매를 걷고.", "heal", ["찻잔"],
              "A middle-aged man in an apron salting cabbage in a large bowl in a Korean kitchen, warm evening light",
              "어머니처럼 소매를 걷고 담그는 첫 김치"),
-            ("narrator", "그리고 그 김치통은, 이제 아들의 집 부엌으로 옮겨졌습니다.", "heal", [],
+            ("son", "엄마, 이제 내가 이김치 담아 먹을게. 소매 걷고.", "heal", [],
              "The old brown kimchi pot placed in a clean modern kitchen, morning sunlight, hopeful mood",
              "아들의 부엌으로 옮겨진 어머니의 김치통"),
         ],
@@ -101,7 +131,7 @@ STORIES: dict[str, dict] = {
             ("mil", "이혼해. 우리 집에 너 같은 사람 필요 없어.", "conflict", ["문 쿵"],
              "An older Korean woman pointing at divorce papers on a table, cold bright light, dominant posture",
              "이혼하라며 서류를 미는 시어머니"),
-            ("narrator", "수진은 화를 내지 않았습니다. 대신 가방에서 서류 한 장을 꺼냈습니다.", "twist", ["심장박동"],
+            ("wife", "어머니, 화내기 전에 이거 먼저 보세요. 가방에서 꺼낼게요.", "twist", ["심장박동"],
              "A woman calmly placing a single document on the table, closeup of hands, dramatic light",
              "조용히 가방에서 서류 한 장을 꺼내는 수진"),
             ("narrator", "그것은 이 집 건물의 등기부등본이었습니다.", "twist", [],
@@ -116,7 +146,7 @@ STORIES: dict[str, dict] = {
             ("wife", "십 년 동안 감사했습니다. 이제는 제가 나갈 차례네요.", "heal", ["발자국"],
              "A woman standing up with a small bag over her shoulder, calm face, dawn light through a window",
              "가방을 메고 조용히 일어서는 수진"),
-            ("narrator", "수진은 그 집을 나왔습니다. 뒤도 돌아보지 않고.", "heal", ["발자국"],
+            ("wife", "십 년 동안 감사했습니다. 잘 계세요.", "heal", ["발자국"],
              "A woman walking out of a Korean house gate at dawn, long shadow, quiet street",
              "뒤도 돌아보지 않고 집을 나서는 수진"),
             ("narrator", "일주일 뒤, 그 집 앞에는 임대료 고지서가 붙었습니다.", "twist", ["종이 바스락"],
@@ -154,7 +184,7 @@ STORIES: dict[str, dict] = {
             ("narrator", "상자 바닥에는 늘 같은 문장이 적혀 있었습니다. 미안하다고.", "conflict", [],
              "Handwritten Korean words on the bottom of a cardboard box, closeup, dim light",
              "상자 바닥에 적힌 한 문장, 미안하다고"),
-            ("narrator", "지연은 택배 회사에 물었지만, 발신인은 끝내 나오지 않았습니다.", "conflict", ["전화벨"],
+            ("woman", "발신인이 안 나온다고요? 그럼 이 상자, 누가 보낸 거예요.", "conflict", ["전화벨"],
              "A woman on the phone in a dim kitchen at night, worried expression, phone light on her face",
              "택배 회사에 문의하는 지연, 돌아오는 대답은 없었다"),
             ("narrator", "석 달째 되던 화요일, 상자 안에 처음으로 주소가 들어 있었습니다.", "twist", [],
@@ -172,7 +202,7 @@ STORIES: dict[str, dict] = {
             ("old", "내가 못 지켜 줬어. 그 말을 평생 못 했어.", "conflict", ["한숨"],
              "An old man sitting on a bench, hands folded, winter sunlight through a window",
              "평생 못다 한 말을 꺼내는 노인"),
-            ("narrator", "어머니는 돌아가시기 전, 그에게 사진을 맡겼습니다. 딸에게 꼭 전해 달라고.", "heal", [],
+            ("old", "너의 어머니가 그러시더라. 딸에게 꼭 전해 달라고.", "heal", [],
              "A stack of old photographs tied with a ribbon on a wooden table, warm winter light",
              "딸에게 전해 달라 맡겨 둔 사진들"),
             ("narrator", "지연은 그날 처음으로, 어머니의 젊은 날을 알게 되었습니다.", "heal", ["찻잔"],
@@ -181,7 +211,7 @@ STORIES: dict[str, dict] = {
             ("old", "다음 화요일에도… 상자 하나 보내도 될까.", "heal", ["한숨"],
              "An elderly man holding a small cardboard box, hopeful eyes, soft afternoon light",
              "다음 화요일에도 상자를 보내도 되냐는 노인"),
-            ("narrator", "그 뒤로 지연의 집에는 매주 화요일, 두 사람의 사진이 도착합니다.", "heal", [],
+            ("old", "다음 화요일에도 상자 하나 보내도 될까. 사진 두 장씩.", "heal", [],
              "Two old photographs side by side on a sunny table, warm morning light, hopeful",
              "매주 화요일, 이제는 두 사람의 사진이 온다"),
         ],
@@ -203,7 +233,7 @@ STORIES: dict[str, dict] = {
             ("mil", "국이 짜다. 너는 늘 손맛이 그 모양이야.", "conflict", ["숟가락"],
              "An elderly Korean woman pushing a soup bowl away at a table, displeased expression, dim light",
              "국이 짜다며 그릇을 미는 시어머니"),
-            ("narrator", "미경은 아무 말 없이 물을 한 컵 따라 드렸습니다.", "conflict", [],
+            ("wife", "어머니, 국이 짜셨으면 물이라도 드세요. 천천히 드셔도 됩니다.", "conflict", [],
              "A woman quietly placing a glass of water in front of an elderly woman, closeup of hands",
              "말없이 물 한 컵을 따라 드리는 며느리"),
             ("sister", "오빠는 왜 이런 것도 못 챙겨. 엄마가 얼마나 속상하시게.", "conflict", ["한숨"],
@@ -215,7 +245,7 @@ STORIES: dict[str, dict] = {
             ("narrator", "병원비를 두고 시누이는 말했습니다. 나는 형편이 안 된다고.", "conflict", [],
              "A hospital corridor at night, two women arguing in the distance, cold fluorescent light",
              "병원비 앞에서 발을 빼는 시누이"),
-            ("narrator", "미경은 십 년 전부터 모아 둔 돈을 꺼냈습니다. 한 번도 말하지 않은 돈이었습니다.", "heal", ["종이 바스락"],
+            ("wife", "제가 십 년 동안 조금씩 모았어요. 어머니 약값은 제가 하겠습니다.", "heal", ["종이 바스락"],
              "A woman opening an old bankbook at a hospital cafeteria table, closeup, tired hands",
              "십 년 동안 모아 둔 통장을 꺼내는 미경"),
             ("mil", "너… 그 돈 어디서 났어.", "twist", ["한숨"],
@@ -280,16 +310,16 @@ STORIES: dict[str, dict] = {
             ("other", "말하면 네가 힘들어질까 봐. 그뿐이었어.", "conflict", [],
              "A man looking down, hands in pockets, soft evening light, quiet sadness",
              "말을 삼켰던 이유를 꺼내는 남자"),
-            ("narrator", "두 사람은 그날 밤, 골목 끝 포장마차에 마주 앉았습니다.", "heal", ["찻잔"],
+            ("lead", "이십 년 만에 술 한잔이 이렇게 어렵네. 자, 따라 드세요.", "heal", ["찻잔"],
              "Two people sitting at a small Korean street tent bar at night, warm lamps, steam rising",
              "골목 끝 포장마차에 마주 앉은 두 사람"),
-            ("narrator", "이십 년 동안 하지 못한 말들이, 그제야 하나씩 나왔습니다.", "heal", [],
+            ("other", "그때 말 못 했던 것들, 오늘 다 꺼내자. 한 자릿수 후회로 남기지 말고.", "heal", [],
              "Closeup of two cups of tea on a wooden table, steam, warm light, intimate mood",
              "이십 년 만에 하나씩 꺼내는 이야기"),
             ("other", "이제라도… 자주 보고 싶어.", "heal", ["한숨"],
              "A man smiling faintly at a woman across a small table, warm light, hopeful mood",
              "이제라도 자주 보고 싶다는 말"),
-            ("narrator", "주인공은 대답 대신 고개를 끄덕였습니다.", "heal", [],
+            ("lead", "그래. 이제 자주 보자. 매주 화요일 여기서.", "heal", [],
              "A woman nodding slightly, eyes glistening, warm streetlight, closeup",
              "대답 대신 조용히 고개를 끄덕이는 주인공"),
             ("narrator", "그날의 편지는, 이십 년 만에 제자리를 찾았습니다.", "heal", [],
@@ -467,10 +497,10 @@ def build_template_script(settings: dict) -> dict:
     hook_scenes = []
     for speaker, text, _emo, sfx, en, ko in hook_beats:
         line = _first_sentence(text)
-        hook_scenes.append({
+        hook_scenes.append(attach_character_meta({
             "speaker": speaker, "text": line, "emotion": "twist", "sfx": list(sfx)[:1],
             "image_prompt": en, "image_caption": ko, "hook_line": True,
-        })
+        }))
     # 첫 15초가 되도록 훅 대사를 조금 더 보탠다
     total_hook = sum(len(s["text"]) for s in hook_scenes)
     if total_hook < 52 and len(twist_beats) >= 2:
@@ -490,10 +520,10 @@ def build_template_script(settings: dict) -> dict:
 
     scenes = hook_scenes + [rewind]
     for speaker, text, emotion, sfx, en, ko in expanded:
-        scenes.append({
+        scenes.append(attach_character_meta({
             "speaker": speaker, "text": text, "emotion": emotion, "sfx": list(sfx),
             "image_prompt": en, "image_caption": ko,
-        })
+        }))
 
     n_ch = max(1, min(len(CHAPTER_TITLES.get(genre, [])), max(1, int(target // 180))))
     titles = CHAPTER_TITLES.get(genre, ["이야기"])

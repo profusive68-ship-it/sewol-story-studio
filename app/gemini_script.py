@@ -27,6 +27,16 @@ SPEAKERS = ("narrator", "old_male", "old_female", "female", "young_male", "child
 
 SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 아래는 절대 규칙이다.
 
+[대화 비중 — 최우선]
+- 해설(narrator)만 길게 이어 쓰지 않는다. 전체 대사 중 **인물 간의 직접 대화(생생한 구어체 대사)를 약 30~40% 비중**으로
+  자연스럽게 섞는다. 해설로 상황을 요약하기 전에, 그 자리에서 사람들이 실제로 주고받을 말을 먼저 내놓는다.
+- 인물 대사는 그 사람의 나이·성별·성격·지금 처한 상황이 말투에 배어 나오게 쓴다.
+- 인물이 말하는 장면마다 그 대사의 화자 정보를 함께 적는다:
+    "speaker_age": "70대 후반" 처럼 나이(예: "78세", "30대 초반", "8세"),
+    "speaker_gender": "male" 또는 "female",
+    "speaker_tone": "다정하지만 기력이 약한 병상의 노모" 처럼 성격·처지·지금 감정을 한 줄로.
+  이 정보는 그 장면의 음성 연기(목소리 톤·속도)에 그대로 쓰인다. 해설(narrator) 장면에는 넣지 않는다.
+
 [콜드 오픈 — 최우선]
 - '안녕하세요', '세월의 사연극장입니다', '오늘의 사연은', '어서 오세요' 같은 인사·채널 소개·사연 예고로 시작하지 않는다.
 - 첫 장면 첫 대사는 가장 충격적인 사건·대사 한복판이어야 한다. 청취자가 "어? 뭐지?" 하고 멈추는 첫 문장.
@@ -57,11 +67,13 @@ SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 
 
 [형식]
 - 화자: narrator, old_male, old_female, female, young_male, child 중 하나.
+  인물 대사 장면에는 speaker_age(나이 문자열)·speaker_gender("male"|"female")·speaker_tone(성격·상황 한 줄)을 반드시 함께 넣는다.
 - 감정: conflict(갈등), twist(반전), heal(치유) 중 하나.
 - 효과음 sfx: 다음 목록에서만 0~2개. 대사에 [문 쾅] 같은 태그를 직접 쓰지 말고 sfx 배열에 넣는다.
   목록: """ + ", ".join(SFX_VOCAB) + """
 - image_prompt 는 영어. 인물의 나이·머리·옷을 매 장면 똑같이 반복해 얼굴 일관성을 지킨다.
   영화 스틸 같은 사실적 사진, 조명·장소·표정 구체적으로. 화면 안 글자 금지(no text, no letters, no logo).
+- characters 의 각 인물에는 age(예: "78세", "40대 후반")와 gender("male"|"female")도 함께 적는다.
 - image_caption 은 한국어 한 줄(25자 내외).
 """
 
@@ -258,7 +270,10 @@ hook.line 을 첫 대사로 쓰고, 그 상황 한복판에서 시작한다. 인
 
 [쓰기 규칙]
 - 분량 약 {total_chars}자. {scenes_hint}
-- 해설(narrator)과 인물 직접 대화를 번갈아. 해설만 길게 이어 쓰지 않는다. 대사는 실제 말투 그대로.
+- 해설(narrator)과 인물 직접 대화를 번갈아. **인물 대화가 전체의 30~40%가 되게 한다.** 해설만 길게 이어 쓰지 않는다.
+  요약할 수 있는 상황도 인물들의 실제 말다툼·다정한 말·머뭇거림으로 보여 준다. 대사는 실제 말투 그대로.
+- 인물이 말하는 장면마다 speaker_age(예: "40대 후반", "78세", "8세")·speaker_gender("male"|"female")·
+  speaker_tone(성격·처지·지금 감정 한 줄)을 함께 적는다. 이 정보가 목소리 연기에 그대로 쓰인다.
 - 일본어 번역투 금지(~에 대해, ~에 있어서, ~되어진다, ~라는 사실을 알게 되었다, 그녀/그는 남발).
 - 장면마다 효과음(sfx)을 1~2개 붙인다. 표에 있는 것만. 대사 속에 [대괄호] 태그를 쓰지 않는다.
 - 효과음은 대사의 문장 시작·대화 사이·문장 끝에 자연스럽게 깔리도록 고른다(문 여닫기, 발자국,
@@ -270,7 +285,11 @@ hook.line 을 첫 대사로 쓰고, 그 상황 한복판에서 시작한다. 인
 
 JSON 만 출력:
 {{"scenes":[{{"speaker":"narrator","text":"...","emotion":"conflict","sfx":["한숨"],
-  "image_prompt":"English cinematic still, ...","image_caption":"한국어 장면 설명"}}]}}"""
+  "image_prompt":"English cinematic still, ...","image_caption":"한국어 장면 설명"}},
+ {{"speaker":"son","text":"...","emotion":"conflict","sfx":[],
+  "speaker_age":"40대 후반","speaker_gender":"male",
+  "speaker_tone":"십 년 만에 집을 연 아들, 서운함과 그리움이 뒤섞임",
+  "image_prompt":"...","image_caption":"..."}}]}}"""
 
 
 def _short_design_prompt(settings: dict) -> str:
@@ -410,6 +429,15 @@ def normalize_script(data: dict, settings: dict) -> dict:
     """생성 결과를 프로젝트 규격에 맞게 다듬는다."""
     scenes_in = data.get("scenes") or []
     hook_line = str((data.get("hook") or {}).get("line", "")).strip() if isinstance(data.get("hook"), dict) else ""
+    # 설계 단계의 인물 정보(나이·성별)를 화자 이름으로 연결해 두면, 화자 메타가 빠진 장면도 채운다.
+    char_meta: dict[str, dict] = {}
+    for c in (data.get("characters") or []):
+        if isinstance(c, dict) and c.get("id"):
+            char_meta[str(c["id"]).strip().lower()] = {
+                "age": str(c.get("age") or "").strip(),
+                "gender": str(c.get("gender") or "").strip(),
+                "desc": str(c.get("relation") or "") + " " + str(c.get("habit") or ""),
+            }
     scenes: list[dict] = []
 
     for s in scenes_in:
@@ -417,13 +445,25 @@ def normalize_script(data: dict, settings: dict) -> dict:
         text = re.sub(r"^[\"'“”]", "", text).strip()
         if not text:
             continue
-        speaker = str(s.get("speaker") or "narrator").strip()
+        raw_speaker = str(s.get("speaker") or "").strip()
+        speaker = raw_speaker or "narrator"
         if speaker not in SPEAKERS:
             speaker = "narrator"
         emotion = str(s.get("emotion") or "heal").strip()
         if emotion not in EMOTIONS:
             emotion = "heal"
         sfx = [str(x).strip() for x in (s.get("sfx") or []) if str(x).strip() in SFX_VOCAB][:2]
+        meta = {
+            "age": str(s.get("speaker_age") or "").strip()[:20],
+            "gender": str(s.get("speaker_gender") or "").strip().lower()[:10],
+            "tone": re.sub(r"\s+", " ", str(s.get("speaker_tone") or "")).strip()[:120],
+        }
+        if raw_speaker and raw_speaker.lower() != "narrator" and not (meta["age"] or meta["gender"]):
+            fill = char_meta.get(raw_speaker.lower())
+            if fill:
+                meta["age"] = meta["age"] or fill["age"]
+                meta["gender"] = meta["gender"] or fill["gender"]
+                meta["tone"] = meta["tone"] or fill["desc"][:120]
         prompt = re.sub(r"\s+", " ", str(s.get("image_prompt") or "")).strip()
         caption = re.sub(r"\s+", " ", str(s.get("image_caption") or "")).strip()
         if not caption:
@@ -438,6 +478,9 @@ def normalize_script(data: dict, settings: dict) -> dict:
             "sfx": sfx,
             "image_prompt": prompt,
             "image_caption": caption,
+            "speaker_age": meta["age"],
+            "speaker_gender": meta["gender"],
+            "speaker_tone": meta["tone"],
             "chapter": int(s.get("chapter") or 1),
             "chapter_title": str(s.get("chapter_title") or "").strip(),
         })
@@ -461,7 +504,12 @@ def normalize_script(data: dict, settings: dict) -> dict:
     chars = []
     for c in (data.get("characters") or []):
         if isinstance(c, dict) and c.get("name"):
-            chars.append({"name": str(c["name"]).strip(), "desc_en": str(c.get("desc_en", "")).strip()})
+            chars.append({
+                "name": str(c["name"]).strip(),
+                "desc_en": str(c.get("desc_en", "")).strip(),
+                "age": str(c.get("age") or "").strip()[:20],
+                "gender": str(c.get("gender") or "").strip().lower()[:10],
+            })
 
     thumb = data.get("thumbnail") or {}
     style1 = [str(x) for x in (thumb.get("style1") or []) if str(x).strip()]

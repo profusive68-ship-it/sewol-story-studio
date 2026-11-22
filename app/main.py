@@ -33,7 +33,9 @@ from .project import (CTA_SHORT, CTA_TEXT, LIKE_VOICE_SHORT, LIKE_VOICE_TEXT, bu
                       write_image_request, write_upload_copy)
 from .pronunciation import ensure_pron_file
 from .render import detect_encoder, encoder_info, render_thumbnails, render_video
-from .settings import (AVATAR_KINDS, DEFAULT_GITHUB_REPO, FORMAT_PRESETS, GENRES, OPENAI_TTS_MODELS,
+from .settings import (AVATAR_GENDERS, AVATAR_KINDS, AVATAR_SIZE_PX, DEFAULT_GITHUB_REPO,
+                       FORMAT_PRESETS, GENRES, LIVE_BADGE_DEFAULT, LIVE_BADGE_PERIOD,
+                       AVATAR_MOTION_CYCLE, AVATAR_MOTION_SECONDS, OPENAI_TTS_MODELS,
                        SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, load_config, public_config,
                        save_config)
 from .tts import preview_path, synthesize_sync, test_openai_tts, voice_report
@@ -183,6 +185,11 @@ def meta():
         "openai_tts_models": OPENAI_TTS_MODELS,
         "subtitle_sizes": {k: {"px": v[0], "label": v[1]} for k, v in SUBTITLE_SIZES.items()},
         "avatar_kinds": AVATAR_KINDS,
+        "avatar_genders": AVATAR_GENDERS,
+        "avatar_size": AVATAR_SIZE_PX,
+        "live_badge_default": LIVE_BADGE_DEFAULT,
+        "live_badge_period": LIVE_BADGE_PERIOD,
+        "avatar_motion": {"cycle": AVATAR_MOTION_CYCLE, "seconds": AVATAR_MOTION_SECONDS},
         "config": public_config(),
         "encoder": encoder_info(),
         "defaults": {
@@ -280,7 +287,8 @@ class CreateIn(BaseModel):
     voice_mode: str = "multi"
     rate: int = 0
     avatar: bool = True
-    avatar_kind: str = "female"
+    avatar_kind: str = "auto"
+    live_badge: bool = True
     subtitle_size: str = "senior"
     image_mode: str = "B"
     like_banner: bool = True
@@ -761,7 +769,8 @@ def strategy_execute(body: StrategyIn):
             "voice_mode": "multi",
             "rate": 0,
             "avatar": True,
-            "avatar_kind": "female",
+            "avatar_kind": "auto",
+            "live_badge": True,
             "subtitle_size": "senior",
             "image_mode": mode,
             "like_banner": True,

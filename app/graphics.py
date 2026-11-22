@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,7 @@ from .paths import CACHE_DIR, FONT_DIR
 GOLD = (232, 190, 92)
 CREAM = (247, 240, 226)
 RED = (196, 42, 38)
+ONAIR = (232, 64, 52)
 GREEN = (124, 255, 107)
 YELLOW = (255, 225, 77)
 
@@ -66,6 +68,15 @@ def text_outlined(draw: ImageDraw.ImageDraw, xy, text: str, f: ImageFont.FreeTyp
 
 
 # ── 아바타 ────────────────────────────────────────────────────────────────
+def _on_air_glow(S: int, alpha: int = 54, width_ratio: float = 0.036) -> Image.Image:
+    """원형 테두리 바깥으로 번지는 은은한 붉은 ON-AIR 빛."""
+    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse([S * 0.018, S * 0.018, S * 0.982, S * 0.982],
+               outline=ONAIR + (max(0, min(255, alpha)),), width=max(2, int(S * width_ratio)))
+    return glow.filter(ImageFilter.GaussianBlur(max(1.0, S * 0.016)))
+
+
 def make_avatar(kind: str = "female", size: int = 420) -> Image.Image:
     """우측 하단 원형 진행자 아바타(기본 내장)."""
     ss = 2
@@ -129,24 +140,127 @@ def make_avatar(kind: str = "female", size: int = 420) -> Image.Image:
     ImageDraw.Draw(mask).ellipse([2, 2, S - 3, S - 3], fill=255)
     out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     out.paste(img, (0, 0), mask)
+    # ON-AIR 글로우 → 금테를 다시 선명하게
+    out = Image.alpha_composite(out, _on_air_glow(S))
     d2 = ImageDraw.Draw(out)
     d2.ellipse([S * 0.035, S * 0.035, S * 0.965, S * 0.965], outline=GOLD + (235,), width=int(S * 0.018))
     return out.resize((size, size), Image.LANCZOS)
 
 
-def avatar_from_photo(path: Path, size: int = 420) -> Image.Image:
+def avatar_from_photo(path: Path, size: int = 420, on_air: bool = True) -> Image.Image:
+    """사진을 원형으로 잘라 금테(+ON-AIR 글로우)를 두른 진행자 아바타로."""
+    ss = 2
+    S = size * ss
     im = Image.open(path).convert("RGB")
     w, h = im.size
     s = min(w, h)
-    im = im.crop(((w - s) // 2, int((h - s) * 0.25), (w + s) // 2, int((h - s) * 0.25) + s)).resize((size, size), Image.LANCZOS)
-    mask = Image.new("L", (size * 2, size * 2), 0)
-    ImageDraw.Draw(mask).ellipse([0, 0, size * 2, size * 2], fill=255)
-    mask = mask.resize((size, size), Image.LANCZOS)
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # 얼굴이 위쪽에 오도록 25% 지점 기준으로 크롭
+    top = max(0, min(h - s, int((h - s) * 0.25)))
+    im = im.crop(((w - s) // 2, top, (w + s) // 2, top + s)).resize((S, S), Image.LANCZOS)
+    mask = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, S, S], fill=255)
+    out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     out.paste(im, (0, 0), mask)
+    if on_air:
+        out = Image.alpha_composite(out, _on_air_glow(S))
     d = ImageDraw.Draw(out)
-    d.ellipse([2, 2, size - 3, size - 3], outline=GOLD + (240,), width=max(3, size // 90))
-    return out
+    d.ellipse([S * 0.018, S * 0.018, S * 0.982, S * 0.982], outline=GOLD + (240,),
+              width=max(3, int(S * 0.011)))
+    return out.resize((size, size), Image.LANCZOS)
+
+
+# ── LIVE 배지 ─────────────────────────────────────────────────────────────
+def live_badge(w: int, pulse: float = 1.0, label: str = "LIVE") -> Image.Image:
+    """라디오 스튜디오 느낌의 `● LIVE` 알약 배지.
+
+    진한 반투명 어두운 배경 + 붉은 원형 점(은은한 글로우) + 선명한 흰색 글씨.
+    `pulse` 0~1 로 붉은 점의 숨쉬는 세기를 조절한다(0.8초 주기 프레임용).
+    """
+    ss = 2
+    fs = max(16, int(round(w * 0.0215))) * ss
+    pad = int(fs * 0.62)
+    dot_r = int(fs * 0.34)
+    gap = int(fs * 0.28)
+    f = font(fs, round_style=True)
+    tw = int(f.getlength(label))
+    bw = pad * 2 + dot_r * 2 + gap + tw
+    bh = int(fs * 1.62)
+    img = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=bh // 2, fill=(15, 13, 13, 216),
+                        outline=(255, 255, 255, 58), width=max(2, fs // 13))
+    cx, cy = pad + dot_r, bh / 2
+    pulse = max(0.0, min(1.0, float(pulse)))
+    # 붉은 점 글로우 — pulse 가 클수록 번진다
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    gr = dot_r * (1.55 + 0.35 * pulse)
+    ImageDraw.Draw(glow).ellipse([cx - gr, cy - gr, cx + gr, cy + gr],
+                                 fill=ONAIR + (int(60 + 90 * pulse),))
+    img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(max(1.0, dot_r * 0.5))))
+    d = ImageDraw.Draw(img)
+    rr = dot_r * (0.92 + 0.08 * pulse)
+    d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=ONAIR + (255,))
+    # 점 하이라이트
+    d.ellipse([cx - rr * 0.45, cy - rr * 0.62, cx - rr * 0.02, cy - rr * 0.18],
+              fill=(255, 205, 198, 140))
+    d.text((pad + dot_r * 2 + gap, bh / 2 + fs * 0.02), label, font=f, fill=(255, 255, 255, 255),
+           anchor="lm")
+    return img.resize((max(1, bw // ss), max(1, bh // ss)), Image.LANCZOS)
+
+
+def live_badge_frames(w: int, fps: int = 25, period: float = 0.8) -> tuple[Path, int]:
+    """0.8초 주기로 붉은 점이 은은하게 깜빡이는 `● LIVE` 배지 PNG 시퀀스."""
+    n = max(6, int(round(period * fps)))
+    out = CACHE_DIR / "live_badge" / f"lb_{int(w)}_{int(fps)}_{n}"
+    if (out / "done").exists():
+        return out, n
+    out.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        pulse = 0.5 - 0.5 * math.cos(math.tau * i / n)
+        live_badge(w, pulse).save(out / f"l{i:03d}.png")
+    (out / "done").write_text("ok", encoding="utf-8")
+    return out, n
+
+
+# ── 진행자 모션(정지 사진처럼 보이지 않게) ────────────────────────────────
+def avatar_motion_frames(img: Image.Image, size: int, key: str = "host", fps: int = 25,
+                         cycle: float = 6.0, move: float = 1.6) -> tuple[Path, int]:
+    """6초 주기 중 1.6초만 아주 살짝 — 숨쉬기 줌(≈1.035) + 미세 상하/좌우 + 고개 기울기
+    + ON-AIR 링 펄스. 나머지 구간은 1% 안팎의 잔잔한 호흡만 남는다.
+    """
+    n = max(8, int(round(cycle * fps)))
+    safe = re.sub(r"[^0-9A-Za-z_.-]", "_", str(key))[:60] or "host"
+    out = CACHE_DIR / "avatar_motion" / f"am_{safe}_{int(size)}_{int(fps)}_{int(cycle * 100)}"
+    if (out / "done").exists():
+        return out, n
+    out.mkdir(parents=True, exist_ok=True)
+    S = size * 2
+    base = img.convert("RGBA").resize((S, S), Image.LANCZOS)
+    for i in range(n):
+        t = i / fps
+        ph = t % cycle
+        e = math.sin(math.pi * (ph / move)) ** 2 if ph < move else 0.0
+        breath = math.sin(math.tau * t / 4.2)
+        zoom = 1.008 + 0.004 * breath + 0.028 * e
+        dx = S * 0.008 * math.sin(math.tau * ph / move) * e
+        dy = -S * 0.011 * e
+        ang = 0.9 * math.sin(math.tau * ph / move) * e
+        w2 = max(2, int(round(S * zoom)) // 2 * 2)
+        z = base.resize((w2, w2), Image.LANCZOS)
+        canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        canvas.paste(z, (int((S - w2) / 2 + dx), int((S - w2) / 2 + dy)))
+        if abs(ang) > 0.02:
+            canvas = canvas.rotate(ang, resample=Image.BICUBIC, center=(S / 2, S / 2))
+        # ON-AIR 링이 천천히 숨쉬는 펄스(2.4초)
+        ring_pulse = 0.5 - 0.5 * math.cos(math.tau * t / 2.4)
+        ring = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        ImageDraw.Draw(ring).ellipse([S * 0.026, S * 0.026, S * 0.974, S * 0.974],
+                                     outline=ONAIR + (int(34 + 40 * ring_pulse),),
+                                     width=max(2, int(S * 0.012)))
+        canvas = Image.alpha_composite(canvas, ring.filter(ImageFilter.GaussianBlur(S * 0.006)))
+        canvas.resize((size, size), Image.LANCZOS).save(out / f"a{i:04d}.png")
+    (out / "done").write_text("ok", encoding="utf-8")
+    return out, n
 
 
 # ── 빛 입자 오버레이 ──────────────────────────────────────────────────────

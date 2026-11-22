@@ -9,10 +9,12 @@ import subprocess
 from pathlib import Path
 
 from .ffmpeg_util import ffmpeg_exe, has_encoder, run
-from .graphics import (card_rewind, card_text, end_screen_overlay, like_badge,
-                       particle_frames, save)
-from .paths import CACHE_DIR, FONT_DIR, project_dir
-from .settings import load_config
+from .graphics import (avatar_from_photo, avatar_motion_frames, card_rewind, card_text,
+                       end_screen_overlay, like_badge, live_badge, live_badge_frames,
+                       make_avatar, particle_frames, save)
+from .paths import ASSETS_DIR, CACHE_DIR, FONT_DIR, project_dir
+from .settings import (AVATAR_MOTION_CYCLE, AVATAR_MOTION_SECONDS, AVATAR_SIZE_RATIO,
+                       LIVE_BADGE_PERIOD, load_config, narrator_gender)
 from .subtitles import write_ass, write_srt
 
 FPS = 25
@@ -119,6 +121,41 @@ def _scene_emotion(project: dict, anchor: str) -> str:
 
 
 # ── 카드(되감기·예고·엔딩)와 화면 계획 ──────────────────────────────────
+# ── 진행자(나레이션 호스트) ──────────────────────────────────────────────────
+HOST_DIR = ASSETS_DIR / "hosts"
+
+
+def avatar_px(width: int, height: int) -> int:
+    """1080p 짧은 변 기준 약 290px(27%) — 짝수로 맞춘다."""
+    px = max(160, int(min(width, height) * AVATAR_SIZE_RATIO))
+    return max(2, px // 2 * 2)
+
+
+def avatar_margin(width: int, height: int) -> int:
+    return max(16, int(min(width, height) * 0.032))
+
+
+def host_portrait(project: dict, cfg: dict, px: int) -> tuple[str, "object", str]:
+    """나레이션 성별에 맞는 라디오 진행자 초상을 2배 크기로 만든다.
+
+    returns (gender, PIL.Image, cache_key)
+    """
+    opt = project.get("options") or {}
+    pdir = project_dir(project["id"])
+    kind = str(opt.get("avatar_kind") or "auto").strip().lower()
+    custom = str(opt.get("avatar_image") or "").strip()
+    if custom and (pdir / custom).exists():
+        path = pdir / custom
+        return "custom", avatar_from_photo(path, px * 2), f"custom_{int(path.stat().st_mtime)}"
+    if kind == "custom":
+        kind = "auto"
+    gender = kind if kind in ("male", "female") else narrator_gender(opt, cfg)
+    asset = HOST_DIR / f"host_{gender}.jpg"
+    if asset.exists():
+        return gender, avatar_from_photo(asset, px * 2), f"host_{gender}"
+    return gender, make_avatar(gender, px * 2), f"builtin_{gender}"
+
+
 def build_card_images(project: dict, items: list[dict], width: int, height: int) -> dict[str, Path]:
     pdir = project_dir(project["id"])
     cdir = pdir / "render" / "cards"
@@ -285,17 +322,41 @@ def render_overlay(project: dict, items: list[dict], base: Path, mix_path: Path,
     p_idx = idx
     idx += 1
 
-    avatar_idx = badge_idx = end_idx = None
+    avatar_idx = badge_idx = end_idx = live_idx = None
+    av = avatar_px(width, height)
+    m = avatar_margin(width, height)
+    host_note = ""
     if opt.get("avatar", True):
-        from .graphics import avatar_from_photo, make_avatar
+        # 실제 초상은 이번 렌더의 첫 프레임(미리보기)에도 쓰이므로 render/avatar.png 로 남긴다
         av_path = rdir / "avatar.png"
-        custom = opt.get("avatar_image")
-        if custom and (pdir / custom).exists():
-            avatar_from_photo(pdir / custom, 420).save(av_path)
-        else:
-            make_avatar("male" if opt.get("avatar_kind") == "male" else "female", 420).save(av_path)
-        cmd += ["-loop", "1", "-i", str(av_path)]
+        gender, portrait, cache_key = host_portrait(project, load_config(), av)
+        host_note = f"{gender} 진행자"
+        portrait.save(av_path)
+        try:
+            frames_dir, frame_n = avatar_motion_frames(portrait, av, key=cache_key, fps=FPS,
+                                                       cycle=AVATAR_MOTION_CYCLE,
+                                                       move=AVATAR_MOTION_SECONDS)
+            cmd += ["-stream_loop", "-1", "-framerate", str(FPS), "-i", str(frames_dir / "a%04d.png")]
+            host_note += f" · 모션 {frame_n}프레임"
+        except Exception:
+            # 모션 생성이 실패해도 정지 아바타로 제작은 계속된다
+            cmd += ["-loop", "1", "-i", str(av_path)]
+            host_note += " · 정지"
         avatar_idx = idx
+        idx += 1
+    badge_img = None
+    if avatar_idx is not None and opt.get("live_badge", True):
+        try:
+            bdir, bn = live_badge_frames(width, FPS, LIVE_BADGE_PERIOD)
+            cmd += ["-stream_loop", "-1", "-framerate", str(FPS), "-i", str(bdir / "l%03d.png")]
+            badge_img = live_badge(width, 1.0)
+        except Exception:
+            # 시퀀스를 못 만들면 정적 배지 한 장으로
+            badge_img = live_badge(width, 1.0)
+            bp = rdir / "live_badge.png"
+            badge_img.save(bp)
+            cmd += ["-loop", "1", "-i", str(bp)]
+        live_idx = idx
         idx += 1
     if like and opt.get("like_banner", True):
         b_path = rdir / "badge.png"
@@ -321,12 +382,19 @@ def render_overlay(project: dict, items: list[dict], base: Path, mix_path: Path,
              "[b0][pt]overlay=0:0:format=auto[p0]"]
     cur = "p0"
     if avatar_idx is not None:
-        av = max(120, int(min(width, height) * 0.165))
-        m = max(16, int(min(width, height) * 0.032))
         enable = f":enable='lt(t,{end['start']:.2f})'" if end else ""
-        parts.append(f"[{avatar_idx}:v]scale={av}:{av},format=rgba[avs]")
+        parts.append(f"[{avatar_idx}:v]format=rgba,setsar=1,setpts=PTS-STARTPTS[avs]")
         parts.append(f"[{cur}][avs]overlay=W-w-{m}:H-h-{m}{enable}[p1]")
         cur = "p1"
+    if live_idx is not None and badge_img is not None:
+        bw, bh = badge_img.size
+        # 아바타 위쪽 테두리에 걸치게 — 스튜디오 ON-AIR 태그처럼
+        bx = max(0, width - m - av + (av - bw) // 2)
+        by = max(0, height - m - av - int(bh * 0.55))
+        enable = f":enable='lt(t,{end['start']:.2f})'" if end else ""
+        parts.append(f"[{live_idx}:v]format=rgba,setsar=1,setpts=PTS-STARTPTS[lvs]")
+        parts.append(f"[{cur}][lvs]overlay={bx}:{by}{enable}[pl]")
+        cur = "pl"
     if badge_idx is not None:
         bm = int(width * 0.035)
         bt = int(height * LIKE_TOP)
@@ -352,7 +420,7 @@ def render_overlay(project: dict, items: list[dict], base: Path, mix_path: Path,
     env["FONTCONFIG_FILE"] = str(fc)
     env.setdefault("FONTCONFIG_PATH", str(rdir))
     if progress:
-        progress(2, "자막·입자·아바타 합성 중…")
+        progress(2, f"자막·입자·진행자 합성 중… {host_note}".strip())
     _popen(cmd, pdir, total, progress, "영상 인코딩", env=env)
     if not out.exists() or out.stat().st_size < 10000:
         raise RuntimeError("영상 파일이 만들어지지 않았습니다. render/ffmpeg.log 를 확인하세요.")

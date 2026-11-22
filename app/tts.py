@@ -96,6 +96,242 @@ OPENAI_INSTRUCTIONS = {
 }
 
 
+# ── 인물 맞춤 캐스팅 (나이·성별·성격·상황) ────────────────────────────────
+# gpt-4o-mini-tts 가 공식 지원하는 보이스 범위 안에서만 고른다.
+OPENAI_VOICES = ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
+                 "sage", "shimmer", "verse")
+OPENAI_MALE_VOICES = ("onyx", "ash", "echo", "ballad", "verse", "alloy", "fable")
+OPENAI_FEMALE_VOICES = ("coral", "sage", "nova", "shimmer", "alloy", "fable")
+
+EMOTION_KO = {"conflict": "갈등·서운함", "twist": "반전·충격", "heal": "치유·따뜻함"}
+
+# 성격·상황 키워드 — 보이스는 나이·성별로 고르고, 결은 지시문과 미세 보정으로 살린다.
+COLD_WORDS = ("냉정", "거만", "차갑", "싸늘", "분노", "화가", "악", "협박", "비꼬", "무뚝뚝",
+              "권위", "재벌", "팀장", "사장", "형님", "고압")
+WARM_WORDS = ("다정", "따뜻", "미소", "부드", "정 많", "온화", "자애", "포근", "웃으")
+WEAK_WORDS = ("기력", "병상", "아프", "투병", "쇠약", "지친", "수척", "임종", "요양")
+YOUNG_WORDS = ("어린", "아이", "학생", "청소년", "초등")
+OLD_WORDS = ("노인", "노모", "노파", "할아버지", "할머니", "백발", "주름", "옹 ")
+
+# 대사에 나이가 없어도 성격·처지 키워드로 대략의 나이를 짐작한다.
+def _infer_years(age, tone: str) -> int | None:
+    years = parse_age(age)
+    if years is not None:
+        return years
+    t = str(tone or "")
+    if _has(t, OLD_WORDS):
+        return 75
+    if _has(t, YOUNG_WORDS):
+        return 10
+    if "청년" in t or "젊은" in t:
+        return 28
+    return None
+
+# 역할만으로도 성별을 알 수 있는 경우(나이 정보가 없을 때의 기본값)
+ROLE_GENDER = {"old_male": "male", "young_male": "male", "old_female": "female",
+               "female": "female"}
+
+CHARACTER_BASE = (
+    "한국 라디오 드라마의 등장인물입니다. 대본의 대사를 실제 사람이 말하듯 자연스러운 "
+    "구어체로 연기합니다. 나이와 성격, 지금 처한 상황이 목소리와 말투에 배어 나오게 하고, "
+    "감정을 과장하지 않으면서도 숨소리·말끝·쉼이 살아 있게 읽습니다. 표준 한국어 발음으로 또박또박."
+)
+
+
+def parse_age(age) -> int | None:
+    """'70대', '70대 후반', '78세', '8세', 'late 40s' → 대표 나이(정수)."""
+    if age is None or isinstance(age, bool):
+        return None
+    if isinstance(age, (int, float)):
+        v = int(age)
+        return v if 0 < v <= 110 else None
+    t = str(age).strip().lower()
+    if not t:
+        return None
+    m = re.search(r"(\d{1,3})\s*대", t)
+    if m:
+        base = int(m.group(1))
+        if "초" in t:
+            return base + 2
+        if "중" in t:
+            return base + 5
+        if "후" in t or "말" in t:
+            return base + 8
+        return base + 5
+    m = re.search(r"(\d{1,3})\s*(?:세|살)", t)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(?:late\s*)?(\d{1,3})\s*(?:s\b|years?\s*old|yo\b)", t)
+    if m:
+        v = int(m.group(1))
+        return v + 8 if "late" in t else v
+    m = re.search(r"(\d{1,3})", t)
+    if m:
+        v = int(m.group(1))
+        if 0 < v <= 110:
+            return v
+    return None
+
+
+def normalize_gender(gender) -> str:
+    """male/female/남/여/남성/여성/아들/어머니… → 'male' | 'female' | ''."""
+    t = str(gender or "").strip().lower()
+    if not t:
+        return ""
+    if t in ("male", "m", "man", "boy", "남", "남자", "남성", "아들", "아버지", "할아버지",
+             "청년", "삼촌", "오빠", "형"):
+        return "male"
+    if t in ("female", "f", "woman", "girl", "여", "여자", "여성", "딸", "어머니", "엄마",
+             "할머니", "아내", "며느리", "누나", "언니", "아주머니"):
+        return "female"
+    if any(k in t for k in ("female", "woman", "girl", "여성", "여자")):
+        return "female"
+    if any(k in t for k in ("male", "man", "boy", "남성", "남자")):
+        return "male"
+    return ""
+
+
+def _has(text: str, words: tuple[str, ...]) -> bool:
+    t = str(text or "")
+    return any(w in t for w in words)
+
+
+def _voice_for(gender: str, years: int | None, tone: str = "") -> str:
+    """나이·성별(+성격 결) → OpenAI 보이스. 정보가 없으면 빈 문자열."""
+    g = normalize_gender(gender)
+    if not g and years is None:
+        return ""
+    cold = _has(tone, COLD_WORDS)
+    warm = _has(tone, WARM_WORDS)
+    if years is not None and years <= 12:
+        return "verse" if g == "male" else "nova"
+    if years is not None and years < 20:
+        return "echo" if g == "male" else "coral"
+    if g == "male":
+        if cold:
+            return "ash"
+        if years is not None and years >= 60:
+            return "ash"
+        if years is not None and years >= 40:
+            return "onyx"
+        return "ballad" if warm else "echo"
+    if g == "female":
+        if cold or (years is not None and years >= 60):
+            return "sage"
+        if years is not None and years < 40:
+            return "nova" if warm else "coral"
+        return "coral"
+    return ""
+
+
+def _base_instruction(role: str, has_meta: bool) -> str:
+    """표준 6배역(old_male·female·narrator…)이 아니면 인물 지시문을 기본으로 쓴다.
+
+    man/woman/elder 같은 별명이나 son·mil 같은 자유 화자 이름은 배역 기본 지시문이
+    오히려 어긋나므로(예: '냉정한 팀장'에게 '다급한 청년' 지시), 인물 정보 기반으로 읽는다.
+    """
+    raw = str(role or "").strip()
+    if has_meta and raw and raw not in OPENAI_VOICE_MAP:
+        return CHARACTER_BASE
+    return openai_instructions(role)
+
+
+def _with_direction(base: str, age="", gender="", tone="", emotion="") -> str:
+    parts = []
+    g = normalize_gender(gender)
+    if g:
+        parts.append("성별: " + ("남성" if g == "male" else "여성"))
+    if str(age or "").strip():
+        parts.append("나이: " + str(age).strip()[:20])
+    if str(tone or "").strip():
+        parts.append("성격과 처지: " + str(tone).strip()[:120])
+    if emotion in EMOTION_KO:
+        parts.append("이 장면의 감정: " + EMOTION_KO[emotion])
+    if not parts:
+        return base
+    return (base + " " + " / ".join(parts) +
+            ". 이 인물의 나이와 성격, 지금 상황에 맞춰 말투·호흡·말끝을 살려 연기하세요.")
+
+
+def openai_cast(role: str, mode: str = "multi", age="", gender="", tone="",
+                emotion="") -> tuple[str, str]:
+    """장면의 인물 정보로 (보이스, 연기 지시문)을 고른다. 정보가 없으면 기존 기본값 그대로."""
+    base_voice = openai_voice(role, mode)
+    has_meta = bool(str(age or "").strip() or normalize_gender(gender) or str(tone or "").strip())
+    if not has_meta:
+        return base_voice, openai_instructions(role)
+    role_n = _norm_role(role)
+    g = normalize_gender(gender) or ROLE_GENDER.get(role_n, "")
+    years = _infer_years(age, tone)
+    voice = _voice_for(g, years, tone) or base_voice
+    instr = _with_direction(_base_instruction(role, has_meta), age, gender, tone, emotion)
+    return voice, instr
+
+
+def edge_cast(role: str, mode: str, global_rate: int, age="", gender="", tone="") -> tuple[str, str, int]:
+    """무료 edge-tts 목소리·피치·속도. 나이·성별 정보가 없으면 기존 배역 기본값 그대로."""
+    voice, pitch, rate = _role_cfg(role, mode, global_rate)
+    has_meta = bool(str(age or "").strip() or normalize_gender(gender) or str(tone or "").strip())
+    if not has_meta:
+        return voice, pitch, rate
+    role_n = _norm_role(role)
+    g = normalize_gender(gender) or ROLE_GENDER.get(role_n, "")
+    years = _infer_years(age, tone)
+    if g == "male":
+        voice = "ko-KR-HyunsuMultilingualNeural" if (years is not None and years < 40) else "ko-KR-InJoonNeural"
+        hz = 0
+        if years is not None and years <= 12:
+            hz = 14
+        elif years is not None and years < 20:
+            hz = 6
+        elif years is not None and years >= 75:
+            hz = -12
+        elif years is not None and years >= 60:
+            hz = -8
+        if _has(tone, COLD_WORDS) and hz < 0:
+            hz = max(hz, -6)
+        pitch = f"{hz:+d}Hz"
+    elif g == "female":
+        voice = "ko-KR-SunHiNeural"
+        hz = 0
+        if years is not None and years <= 12:
+            hz = 24
+        elif years is not None and years < 20:
+            hz = 8
+        elif years is not None and years < 30:
+            hz = 4
+        elif years is not None and years >= 75:
+            hz = -18
+        elif years is not None and years >= 60:
+            hz = -14
+        pitch = f"{hz:+d}Hz"
+    else:
+        hz = 0
+        if years is not None and years >= 70:
+            hz = -6
+    rate = int(global_rate)  # 배역 기본 가감은 나이·상황 보정으로 대체
+    if years is not None:
+        if years >= 70:
+            rate -= 4
+        elif years >= 60:
+            rate -= 2
+        elif years <= 12:
+            rate -= 2
+    if _has(tone, WEAK_WORDS):
+        rate -= 2
+    rate = max(-45, min(45, rate))
+    return voice, pitch, rate
+
+
+def scene_cast(scene: dict | None) -> dict:
+    """장면 dict 에서 인물 정보만 꺼낸다(과거 프로젝트는 모두 빈 값)."""
+    sc = scene or {}
+    return {"age": str(sc.get("speaker_age") or "").strip()[:20],
+            "gender": normalize_gender(sc.get("speaker_gender") or ""),
+            "tone": str(sc.get("speaker_tone") or "").strip()[:120],
+            "emotion": str(sc.get("emotion") or "").strip()}
+
+
 def _norm_role(role: str) -> str:
     r = str(role or "narrator").strip()
     r = OPENAI_ROLE_ALIASES.get(r, OPENAI_ROLE_ALIASES.get(r.lower(), r))
@@ -427,45 +663,48 @@ async def synthesize_lines(project: dict, progress=None) -> dict[str, float]:
     durations: dict[str, float] = {}
     done = {"n": 0}
 
-    def plan_for(text: str, role: str) -> dict:
+    def plan_for(text: str, role: str, scene: dict | None = None) -> dict:
+        meta = scene_cast(scene)
         if state["engine"] == "openai":
-            voice = openai_voice(role, mode)
+            voice, instr = openai_cast(role, mode, meta["age"], meta["gender"],
+                                       meta["tone"], meta["emotion"])
             speed = openai_speed(gr)
-            instr = openai_instructions(role)
             return {"engine": "openai", "voice": voice, "speed": speed, "instr": instr,
                     "rate": 0, "pitch": "", "limit": OPENAI_CHUNK,
                     "cache": _cache_path(text, "openai", model, voice, 0, "", speed, instr)}
-        voice, pitch, rate = _role_cfg(role, mode, gr)
+        voice, pitch, rate = edge_cast(role, mode, gr, meta["age"], meta["gender"], meta["tone"])
         return {"engine": "edge", "voice": voice, "speed": 0.0, "instr": "",
                 "rate": rate, "pitch": pitch, "limit": EDGE_CHUNK,
                 "cache": _cache_path(text, "edge", "", voice, rate, pitch, 0.0, "")}
 
-    async def synth_part(part: str, role: str) -> bytes:
+    async def synth_part(part: str, role: str, scene: dict | None = None) -> bytes:
+        meta = scene_cast(scene)
         if state["engine"] == "openai":
+            voice, instr = openai_cast(role, mode, meta["age"], meta["gender"],
+                                       meta["tone"], meta["emotion"])
             try:
                 return await asyncio.to_thread(
-                    synthesize_openai_chunk, part, openai_voice(role, mode), openai_speed(gr),
-                    openai_instructions(role), model, api_key)
+                    synthesize_openai_chunk, part, voice, openai_speed(gr), instr, model, api_key)
             except RuntimeError as e:
                 if not fallback:
                     raise
                 warn(f"OpenAI 음성 호출에 실패해 무료 edge-tts로 대체했습니다 — {str(e)[:140]}")
                 state["engine"] = "edge"
-        voice, pitch, rate = _role_cfg(role, mode, gr)
+        voice, pitch, rate = edge_cast(role, mode, gr, meta["age"], meta["gender"], meta["tone"])
         return await _synth_with_fallback(part, voice, rate, pitch)
 
     async def worker(sc, text, role):
         dest = lines_dir / f"{sc['id']}.mp3"
         async with sem:
             if not dest.exists() or dest.stat().st_size < 500:
-                plan = plan_for(text, role)
+                plan = plan_for(text, role, sc)
                 cache: Path = plan["cache"]
                 if cache.exists() and cache.stat().st_size > 500:
                     dest.write_bytes(cache.read_bytes())
                 else:
                     data = b""
                     for part in _split_long(text, int(plan["limit"])):
-                        data += await synth_part(part, role)
+                        data += await synth_part(part, role, sc)
                     if state["engine"] == plan["engine"]:
                         try:
                             cache.write_bytes(data)

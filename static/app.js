@@ -20,7 +20,7 @@ let LB_IDX = 0;
 const STORE = "sewol.studio.settings.v1";
 const DEFAULTS = {
   genre: "tear_family", preset: "short50", hook15: true, sequel: true, teaserMode: "auto_sequel",
-  teaserText: "", voiceMode: "multi", rate: 0, avatar: true, avatarKind: "female",
+  teaserText: "", voiceMode: "multi", rate: 0, avatar: true, avatarKind: "auto", liveBadge: true,
   subSize: "senior", imageMode: "B", likeVoice: true, likeBanner: true, outroCta: true,
   endScreen: true, sleepRain: false, topic: "", likeVoiceText: "", ctaText: "",
 };
@@ -50,7 +50,8 @@ function restoreLocal() {
     $("#voiceMode").value = d.voiceMode || "multi";
     $("#rate").value = d.rate ?? 0;
     $("#avatar").checked = d.avatar !== false;
-    $("#avatarKind").value = d.avatarKind || "female";
+    $("#avatarKind").value = d.avatarKind || "auto";
+    $("#liveBadge").checked = d.liveBadge !== false;
     $("#likeVoice").checked = d.likeVoice !== false;
     $("#likeBanner").checked = d.likeBanner !== false;
     $("#outroCta").checked = d.outroCta !== false;
@@ -82,6 +83,7 @@ function collect() {
     rate: Number($("#rate").value || 0),
     avatar: $("#avatar").checked,
     avatar_kind: $("#avatarKind").value,
+    live_badge: $("#liveBadge").checked,
     subtitle_size: document.querySelector("input[name=subSize]:checked")?.value || "senior",
     image_mode: document.querySelector("input[name=imageMode]:checked")?.value || "B",
     like_banner: $("#likeBanner").checked,
@@ -1478,7 +1480,8 @@ function bind() {
   });
   $$("input[name=imageMode]").forEach((r) => r.addEventListener("change", () => { onPresetChange(); saveLocal(); }));
   ["topic", "hook15", "sequel", "teaserMode", "teaserText", "voiceMode", "avatar", "avatarKind",
-   "likeVoice", "likeBanner", "outroCta", "endScreen", "sleepRain", "likeVoiceText", "ctaText"].forEach((id) => {
+   "liveBadge", "likeVoice", "likeBanner", "outroCta", "endScreen", "sleepRain", "likeVoiceText",
+   "ctaText"].forEach((id) => {
     const el = $("#" + id);
     el?.addEventListener("change", saveLocal);
     el?.addEventListener("input", () => { if (id === "teaserText") toggleTeaserBox(); });
