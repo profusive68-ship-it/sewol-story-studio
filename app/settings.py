@@ -11,8 +11,8 @@ DEFAULT_GITHUB_REPO = "profusive68-ship-it/sewol-story-studio"
 
 DEFAULT_CONFIG = {
     "gemini_api_key": "",
-    "text_model": "gemini-2.5-flash",
-    "text_model_fallbacks": ["gemini-2.0-flash", "gemini-2.5-pro"],
+    "text_model": "gemini-3.8-flash",
+    "text_model_fallbacks": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"],
     "image_model": "gemini-2.5-flash-image",
     "image_model_fallbacks": ["gemini-2.0-flash-preview-image-generation"],
     "encoder": "auto",          # auto | videotoolbox | libx264
