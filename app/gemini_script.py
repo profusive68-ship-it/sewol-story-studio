@@ -200,6 +200,7 @@ def _call_gemini_rest(cfg: dict, models: list[str], prompt: str, *,
         payload_dict["systemInstruction"] = {"parts": [{"text": system}]}
     raw_body = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
     last_err: Exception | None = None
+    first_busy_err: Exception | None = None
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         for attempt in range(2):
@@ -223,11 +224,13 @@ def _call_gemini_rest(cfg: dict, models: list[str], prompt: str, *,
                     err_body = e.read().decode("utf-8", errors="ignore")[:500]
                 except Exception:
                     pass
-                last_err = RuntimeError(f"HTTP {e.code}: {err_body or e.reason}")
+                last_err = RuntimeError(f"HTTP {e.code} ({model}): {err_body or e.reason}")
                 msg = str(last_err)
                 if e.code in (401, 403) or any(t in msg for t in AUTH_HINTS):
                     raise last_err
                 if e.code in (429, 503) or any(t in msg for t in BUSY_HINTS):
+                    if first_busy_err is None:
+                        first_busy_err = last_err
                     if attempt == 0:
                         time.sleep(RETRY_SECONDS)
                         continue
@@ -242,7 +245,8 @@ def _call_gemini_rest(cfg: dict, models: list[str], prompt: str, *,
                     time.sleep(RETRY_SECONDS)
                     continue
                 break
-    raise RuntimeError(f"Gemini 호출 실패(모델 {', '.join(models)}): {last_err}")
+    final_err = first_busy_err or last_err
+    raise RuntimeError(f"Gemini 호출 실패(모델 {', '.join(models)}): {final_err}")
 
 
 def _extract_json(text: str) -> dict:
