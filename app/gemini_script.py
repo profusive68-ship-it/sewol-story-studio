@@ -132,12 +132,19 @@ def call_gemini(cfg: dict, prompt: str, *, temperature: float = 0.9,
     돌려주는 값은 응답 텍스트. JSON 이 필요하면 response_json=True 로 두고
     받은 텍스트를 _extract_json 에 넘긴다.
     """
+    models = _models(cfg)
+    if client is None:
+        return _call_gemini_rest(
+            cfg, models, prompt,
+            temperature=temperature,
+            response_json=response_json,
+            max_output_tokens=max_output_tokens,
+            system=system,
+        )
     try:
         from google.genai import types
     except ImportError:          # google-genai 없이도 테스트할 수 있게
         types = None
-    client = client or _client(cfg)
-    models = _models(cfg)
     last_err: Exception | None = None
     for model in models:
         for attempt in range(2):
@@ -164,6 +171,76 @@ def call_gemini(cfg: dict, prompt: str, *, temperature: float = 0.9,
                 if any(t in msg for t in NOT_FOUND_HINTS):
                     break                          # 404(모델 없음) → 다음 모델
                 # 두 번째 혼잡 · 그 밖의 오류 → 다음 모델로
+                break
+    raise RuntimeError(f"Gemini 호출 실패(모델 {', '.join(models)}): {last_err}")
+
+
+def _call_gemini_rest(cfg: dict, models: list[str], prompt: str, *,
+                      temperature: float = 0.9, response_json: bool = True,
+                      max_output_tokens: int | None = None,
+                      system: str | None = None) -> str:
+    """Direct REST call to generativelanguage.googleapis.com using x-goog-api-key.
+    Supports both classic AIza... and 2026 AQ.Ab8... AI Studio keys without SDK format issues.
+    """
+    import urllib.error
+    import urllib.request
+    key = (cfg.get("gemini_api_key") or "").strip().lstrip("=").strip()
+    if not key:
+        raise RuntimeError("Gemini API 키가 없습니다.")
+    gen_cfg: dict = {"temperature": temperature}
+    if response_json:
+        gen_cfg["responseMimeType"] = "application/json"
+    if max_output_tokens:
+        gen_cfg["maxOutputTokens"] = int(max_output_tokens)
+    payload_dict: dict = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": gen_cfg,
+    }
+    if system:
+        payload_dict["systemInstruction"] = {"parts": [{"text": system}]}
+    raw_body = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
+    last_err: Exception | None = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        for attempt in range(2):
+            req = urllib.request.Request(
+                url,
+                data=raw_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": key,
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                parts = data["candidates"][0]["content"]["parts"]
+                return "".join(p.get("text", "") for p in parts).strip()
+            except urllib.error.HTTPError as e:
+                err_body = ""
+                try:
+                    err_body = e.read().decode("utf-8", errors="ignore")[:500]
+                except Exception:
+                    pass
+                last_err = RuntimeError(f"HTTP {e.code}: {err_body or e.reason}")
+                msg = str(last_err)
+                if e.code in (401, 403) or any(t in msg for t in AUTH_HINTS):
+                    raise last_err
+                if e.code in (429, 503) or any(t in msg for t in BUSY_HINTS):
+                    if attempt == 0:
+                        time.sleep(RETRY_SECONDS)
+                        continue
+                    break
+                if e.code == 404 or any(t in msg for t in NOT_FOUND_HINTS):
+                    break
+                break
+            except Exception as e:
+                last_err = e
+                msg = _err_text(e)
+                if any(t in msg for t in BUSY_HINTS) and attempt == 0:
+                    time.sleep(RETRY_SECONDS)
+                    continue
                 break
     raise RuntimeError(f"Gemini 호출 실패(모델 {', '.join(models)}): {last_err}")
 
