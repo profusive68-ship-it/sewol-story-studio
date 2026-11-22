@@ -25,17 +25,19 @@ from .audio_mix import build_mix
 from .compile_parts import compile_weekend
 from .ffmpeg_util import FFmpegMissing, ffmpeg_exe, version as ffmpeg_version
 from .gemini_images import generate_images
-from .gemini_script import SYSTEM_RULES
+from .gemini_script import SYSTEM_RULES, engine_tag
 from .paths import (ASSETS_DIR, BASE, PROJECTS_DIR, STATIC_DIR, ensure_dirs,
                     project_dir)
 from .project import (CTA_SHORT, CTA_TEXT, LIKE_VOICE_SHORT, LIKE_VOICE_TEXT, build_timeline,
-                      create_project, list_projects, load, missing_images, now, save, set_status,
+                      create_project, list_projects, load, missing_images, now,
+                      read_script_view, save_edited_script, save, set_status,
                       write_image_request, write_upload_copy)
 from .pronunciation import ensure_pron_file
 from .render import detect_encoder, encoder_info, render_thumbnails, render_video
 from .settings import (AVATAR_GENDERS, AVATAR_KINDS, AVATAR_SIZE_PX, DEFAULT_GITHUB_REPO,
                        FORMAT_PRESETS, GENRES, LIVE_BADGE_DEFAULT, LIVE_BADGE_PERIOD,
-                       AVATAR_MOTION_CYCLE, AVATAR_MOTION_SECONDS, OPENAI_TTS_MODELS,
+                       AVATAR_MOTION_CYCLE, AVATAR_MOTION_SECONDS, OPENAI_SCRIPT_MODELS,
+                       OPENAI_TTS_MODELS, SCRIPT_ENGINES,
                        SUBTITLE_SIZES, TTS_ENGINES, VOICE_MODES, load_config, public_config,
                        save_config)
 from .tts import preview_path, synthesize_sync, test_openai_tts, voice_report
@@ -183,6 +185,8 @@ def meta():
         "voice_modes": VOICE_MODES,
         "tts_engines": TTS_ENGINES,
         "openai_tts_models": OPENAI_TTS_MODELS,
+        "script_engines": SCRIPT_ENGINES,
+        "openai_script_models": OPENAI_SCRIPT_MODELS,
         "subtitle_sizes": {k: {"px": v[0], "label": v[1]} for k, v in SUBTITLE_SIZES.items()},
         "avatar_kinds": AVATAR_KINDS,
         "avatar_genders": AVATAR_GENDERS,
@@ -219,6 +223,8 @@ class ConfigIn(BaseModel):
     openai_api_key: str | None = None
     openai_tts_model: str | None = None
     openai_fallback_edge: bool | None = None
+    script_engine: str | None = None
+    openai_script_model: str | None = None
 
 
 @app.post("/api/config")
@@ -235,6 +241,12 @@ def set_config(body: ConfigIn):
     if "openai_tts_model" in patch:
         model = str(patch["openai_tts_model"] or "").strip()
         patch["openai_tts_model"] = model if model in OPENAI_TTS_MODELS else "gpt-4o-mini-tts"
+    if "script_engine" in patch:
+        sengine = str(patch["script_engine"] or "").strip().lower()
+        patch["script_engine"] = sengine if sengine in SCRIPT_ENGINES else "auto"
+    if "openai_script_model" in patch:
+        smodel = str(patch["openai_script_model"] or "").strip()
+        patch["openai_script_model"] = smodel if smodel in OPENAI_SCRIPT_MODELS else "gpt-4o-mini"
     save_config(patch)
     return public_config()
 
@@ -247,6 +259,9 @@ class ConfigTestIn(BaseModel):
 def test_config(body: ConfigTestIn | None = None):
     target = str((body.engine if body else "") or "gemini").strip().lower()
     cfg = load_config()
+    if target in ("openai_script", "script_openai", "openai_text"):
+        from .openai_script import test_connection
+        return test_connection(cfg)
     if target in ("openai_tts", "openai", "tts"):
         return test_openai_tts(cfg)
     if not (cfg.get("gemini_api_key") or "").strip():
@@ -332,6 +347,9 @@ def get_project(pid: str):
     p["image_files"] = _image_files(pid)
     p["missing_images"] = missing_images(p)
     p["voice_report"] = voice_report(p)
+    p["script_engine"] = p.get("script_engine") or p.get("source") or ""
+    p["script_engine_tag"] = engine_tag(p["script_engine"])
+    p["script_dirty"] = bool(p.get("script_dirty"))
     return p
 
 
@@ -349,6 +367,47 @@ def patch_project(pid: str, body: dict):
     save(p)
     write_upload_copy(p)
     return {"ok": True}
+
+
+# ── 대본 전문 읽기 · 직접 수정 · 재제작 (v1.2.5) ──────────────────────
+@app.get("/api/projects/{pid}/script")
+def get_project_script(pid: str):
+    """[📖 대본 전체 읽기] — 장별 묶음 + 통째로 복사할 평문."""
+    _check_pid(pid)
+    return read_script_view(_load_or_404(pid))
+
+
+class ScriptIn(BaseModel):
+    scenes: list[dict]
+    title: str | None = None
+
+
+@app.post("/api/projects/{pid}/script")
+def save_project_script(pid: str, body: ScriptIn):
+    """화면에서 고친 대본을 저장한다 (script.json · project.json · 요청서·카피까지)."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    try:
+        return save_edited_script(p, body.scenes, body.title)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/projects/{pid}/script/rebuild")
+def rebuild_project_script(pid: str):
+    """[🎬 수정한 대본으로 성우·영상 다시 만들기] — 성우부터 영상·썸네일까지 재제작."""
+    _check_pid(pid)
+    p = _load_or_404(pid)
+    if not (p.get("scenes") or []):
+        raise HTTPException(400, "이 사연에는 대본이 없습니다.")
+    missing = missing_images(p)
+    if missing:
+        raise HTTPException(400, f"이미지 {len(missing)}장이 아직 없습니다: {', '.join(missing[:6])}")
+
+    def work(progress):
+        return rebuild_from_script(pid, progress)
+
+    return {"job": start_job("rescript", work, project_id=pid)}
 
 
 @app.post("/api/projects/{pid}/assemble")
@@ -379,6 +438,35 @@ def assemble_project(pid: str, progress) -> dict:
     if missing:
         raise RuntimeError("이미지가 부족합니다: " + ", ".join(missing[:8]))
 
+    p = _render_stage(pid, p, progress)
+
+    if p["options"].get("auto_upload") and yt.has_client():
+        try:
+            set_status(p, "upload", 99, "유튜브 자동 업로드 중…")
+            progress(99, "유튜브 자동 업로드 중…", 6)
+            res = yt.upload_project(pid,
+                                    title_index=p["options"].get("youtube_title_index", 0),
+                                    privacy=p["options"].get("youtube_privacy", "private"),
+                                    publish_at=p["options"].get("youtube_publish_at"),
+                                    progress=lambda q, m: progress(99, m, 6))
+            p = load(pid)
+            p["warnings"] = list(p.get("warnings", []))
+        except Exception as e:
+            p = load(pid)
+            p.setdefault("warnings", []).append(f"유튜브 자동 업로드 실패: {str(e)[:160]}")
+            save(p)
+
+    set_status(p, "done", 100, "완성! 영상·썸네일·업로드 카피가 준비되었습니다.")
+    progress(100, "완성", 6)
+    return {"project_id": pid, "video": p["outputs"]["video"], "duration": p.get("duration")}
+
+
+def _render_stage(pid: str, p: dict, progress) -> dict:
+    """성우 녹음 → 타임라인 → BGM·효과음 → 영상 → 썸네일·카피.
+
+    대본을 고친 뒤 [🎬 수정한 대본으로 성우·영상 다시 만들기]도 같은 단계를 탄다.
+    음성은 대사 글자로 캐시되므로, 고친 장면만 다시 만들고 나머지는 그대로 쓴다.
+    """
     set_status(p, "tts", 22, "성우 녹음 중…")
     progress(22, "성우 음성 만드는 중…", 3)
     durations = synthesize_sync(p, progress=lambda i, n: progress(22 + int(26 * i / max(1, n)),
@@ -408,26 +496,26 @@ def assemble_project(pid: str, progress) -> dict:
     save(p)
     write_image_request(p)
     write_upload_copy(p)
+    return p
 
-    if p["options"].get("auto_upload") and yt.has_client():
-        try:
-            set_status(p, "upload", 99, "유튜브 자동 업로드 중…")
-            progress(99, "유튜브 자동 업로드 중…", 6)
-            res = yt.upload_project(pid,
-                                    title_index=p["options"].get("youtube_title_index", 0),
-                                    privacy=p["options"].get("youtube_privacy", "private"),
-                                    publish_at=p["options"].get("youtube_publish_at"),
-                                    progress=lambda q, m: progress(99, m, 6))
-            p = load(pid)
-            p["warnings"] = list(p.get("warnings", []))
-        except Exception as e:
-            p = load(pid)
-            p.setdefault("warnings", []).append(f"유튜브 자동 업로드 실패: {str(e)[:160]}")
-            save(p)
 
-    set_status(p, "done", 100, "완성! 영상·썸네일·업로드 카피가 준비되었습니다.")
+def rebuild_from_script(pid: str, progress) -> dict:
+    """수정한 대본으로 성우·타임라인·영상·썸네일을 다시 만든다(이미지는 그대로)."""
+    p = load(pid)
+    missing = missing_images(p)
+    if missing:
+        raise RuntimeError(f"이미지 {len(missing)}장이 아직 없습니다: " + ", ".join(missing[:6]))
+    progress(6, f"수정한 대본({p.get('script_rev', 0)}차)으로 다시 만드는 중…", 1)
+    p = _render_stage(pid, p, progress)
+    # 영상이 실제로 새로 만들어진 뒤에만 '수정본 반영됨'으로 바꾼다(중간에 실패하면 표시가 남는다)
+    p["script_dirty"] = False
+    p["script_rebuilt_at"] = now()
+    save(p)
+    set_status(p, "done", 100, "수정한 대본으로 영상을 다시 만들었습니다.")
     progress(100, "완성", 6)
-    return {"project_id": pid, "video": p["outputs"]["video"], "duration": p.get("duration")}
+    return {"project_id": pid, "video": p["outputs"].get("video"),
+            "duration": p.get("duration"), "script_rev": p.get("script_rev", 0),
+            "rebuilt": True}
 
 
 @app.post("/api/projects/{pid}/images")

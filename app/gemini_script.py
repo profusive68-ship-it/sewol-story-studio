@@ -1,4 +1,4 @@
-"""Gemini 2단계 대본 엔진.
+"""2단계 대본 엔진 — Gemini(무료) 기준, OpenAI(gpt-4o-mini) 자동 보조.
 
 1단계(설계): 구체적 생활 물증 + 5막 복선·반전 뼈대 + 첫 15초 훅을 먼저 확정한다.
 2단계(집필): 확정된 뼈대를 장(章)별로 나누어, 일본어 번역투를 배제한 한국 생활
@@ -7,14 +7,25 @@
 오프닝은 언제나 콜드 오픈이다. 채널 인사·사연 소개로 시작하지 않고 0초부터
 가장 충격적인 대사/사건 한복판에서 시작한다(첫 15초 반전 훅).
 채널 구독·지역 댓글 안내는 영상 맨 끝 엔딩에만 둔다(project.py 에서 마지막 장면으로 붙임).
+
+[엔진 선택 — config.script_engine]
+  · "auto"   : Gemini 키가 있으면 Gemini 먼저. Gemini 가 503·429·한도 초과 등으로
+               실패하면 같은 프롬프트를 OpenAI Chat Completions(gpt-4o-mini)로 이어서
+               보내 같은 JSON 스키마의 대본을 받는다. Gemini 키가 없고 OpenAI 키만
+               있으면 처음부터 OpenAI 로 만든다.
+  · "gemini" : Gemini 단독.
+  · "openai" : OpenAI 단독.
+두 키가 모두 없으면 예외를 올리고, 호출부(project.py)가 예시 대본으로 대체한다.
 """
 from __future__ import annotations
 
 import json
 import re
 import time
-from typing import Callable
+from typing import Callable, Optional
 
+from . import openai_script as oai
+from .honorifics import harmonize_script
 from .settings import GENRES, FORMAT_PRESETS
 
 SFX_VOCAB = ["문 쾅", "문 닫기", "문 삽입", "문 삐걱", "찻잔", "숟가락", "한숨",
@@ -42,6 +53,17 @@ SYSTEM_RULES = """너는 한국 시니어 라디오 드라마 전문 작가다. 
 - 첫 장면 첫 대사는 가장 충격적인 사건·대사 한복판이어야 한다. 청취자가 "어? 뭐지?" 하고 멈추는 첫 문장.
 - 첫 15초 안에 반전의 실마리(물증, 배신, 고백, 발견)가 터진다. 그 뒤에 시간을 되돌려 본론으로 들어간다.
 - 채널 구독·지역 댓글 안내는 영상 맨 끝에서만 언급한다(중간·开头 금지).
+
+[호칭·인물명 통일 — 최우선]
+- 한 편 안에서 같은 사람을 부르는 말은 **처음부터 끝까지 하나로 통일**한다.
+  '엄마'와 '어머니'(그리고 '어머님'), '아빠'와 '아버지'(그리고 '아버님'),
+  '할머니'와 '할머님', '할아버지'와 '할아버님'을 한 편에 섞어 쓰지 않는다.
+- 한 편에서 하나를 골랐으면 **제목·제목 3안·썸네일 문구·설명문·해설·인물 대사·
+  speaker_tone·image_caption** 까지 전부 그 표현으로만 쓴다.
+  (예: 제목이 "엄마의 김치통"이면 썸네일도 '엄마', 대사도 '엄마', 해설도 '엄마')
+- 직접 적어 주신 주제에 그 표현이 있으면 그 말을 그대로 표준으로 삼는다.
+  주제가 "어머니와 아들"이면 끝까지 '어머니'로 쓴다.
+- 인물 이름도 한 가지 표기로 고정한다(같은 사람을 '순자', '순자 씨', '순자 언니'로 섞지 않는다).
 
 [문체]
 - 한국인이 실제로 말하는 구어체. 일본어 번역투를 절대 쓰지 않는다.
@@ -259,10 +281,89 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start:end + 1])
 
 
-def _call(cfg: dict, prompt: str, temperature: float = 0.9) -> dict:
-    text = call_gemini(cfg, prompt, temperature=temperature, response_json=True,
-                       system=SYSTEM_RULES)
+# ── 엔진 선택 (Gemini · OpenAI 자동 보조) ──────────────────────────────────
+ENGINE_LABELS = {"gemini": "Gemini", "openai": "OpenAI"}
+ENGINE_TAGS = {"gemini": "AI 대본 (Gemini)", "openai": "AI 대본 (OpenAI)",
+               "template": "예시 대본"}
+SCRIPT_ENGINE_MODES = ("auto", "gemini", "openai")
+
+
+def has_gemini_key(cfg: dict) -> bool:
+    return bool(str((cfg or {}).get("gemini_api_key") or "").strip().lstrip("=").strip())
+
+
+def has_openai_key(cfg: dict) -> bool:
+    return oai.has_key(cfg or {})
+
+
+def script_engine_mode(cfg: dict) -> str:
+    mode = str((cfg or {}).get("script_engine") or "auto").strip().lower()
+    return mode if mode in SCRIPT_ENGINE_MODES else "auto"
+
+
+def candidate_engines(cfg: dict) -> list[str]:
+    """지금 설정으로 시도할 대본 엔진 순서.
+
+    auto 는 'Gemini 먼저 → 실패하면 OpenAI'. 키가 없는 엔진은 목록에서 빠지므로,
+    쓸 수 있는 엔진이 하나도 없으면 빈 목록이 된다(호출부가 예시 대본으로 대체).
+    """
+    mode = script_engine_mode(cfg)
+    g = has_gemini_key(cfg)
+    o = has_openai_key(cfg)
+    if mode == "gemini":
+        return ["gemini"] if g else []
+    if mode == "openai":
+        return ["openai"] if o else []
+    out: list[str] = []
+    if g:
+        out.append("gemini")
+    if o:
+        out.append("openai")
+    return out
+
+
+def engine_tag(source: str) -> str:
+    """화면 태그 — 'AI 대본 (Gemini)' / 'AI 대본 (OpenAI)' / '예시 대본'."""
+    return ENGINE_TAGS.get(str(source or "").strip().lower(), "AI 대본")
+
+
+def _call_engine(engine: str, cfg: dict, prompt: str, temperature: float) -> dict:
+    """한 엔진으로 호출하고 JSON 만 뽑는다. (테스트에서 이 함수를 바꿔 끼운다)"""
+    if engine == "openai":
+        text = oai.call_openai(cfg, prompt, temperature=temperature,
+                               response_json=True, system=SYSTEM_RULES)
+    else:
+        text = call_gemini(cfg, prompt, temperature=temperature, response_json=True,
+                           system=SYSTEM_RULES)
     return _extract_json(text)
+
+
+def _call(cfg: dict, prompt: str, temperature: float = 0.9,
+          on_engine: Optional[Callable[[str], None]] = None) -> dict:
+    """대본 요청 1회 — 가능한 엔진을 순서대로 시도한다."""
+    engines = candidate_engines(cfg)
+    if not engines:
+        raise RuntimeError(no_engine_message(cfg))
+    errors: list[str] = []
+    for engine in engines:
+        try:
+            data = _call_engine(engine, cfg, prompt, temperature)
+            if on_engine:
+                on_engine(engine)
+            return data
+        except Exception as e:
+            errors.append(f"{ENGINE_LABELS.get(engine, engine)}: {str(e)[:160]}")
+    raise RuntimeError("대본 엔진 호출 실패 — " + " / ".join(errors))
+
+
+def no_engine_message(cfg: dict) -> str:
+    mode = script_engine_mode(cfg)
+    if mode == "gemini":
+        return "대본 엔진이 Gemini 단독인데 Gemini API 키가 없습니다. [Gemini API 설정]에서 키를 저장해 주세요."
+    if mode == "openai":
+        return "대본 엔진이 OpenAI 단독인데 OpenAI API 키가 없습니다. [음성 엔진]에서 키를 저장해 주세요."
+    return ("Gemini·OpenAI API 키가 모두 없어 자동 대본을 만들 수 없습니다. "
+            "[Gemini API 설정]에 키를 저장해 주세요.")
 
 
 # ── 1단계: 설계 ────────────────────────────────────────────────────────────
@@ -291,7 +392,7 @@ def _design_prompt(settings: dict, n_acts: int, n_chapters: int) -> str:
 5) **장별 줄거리**: 각 장에서 무슨 일이 일어나는지 2문장. 어느 막에 속하는지.
 6) **엔딩 떡밥 2종**: (a) sequel_teaser = 이번 사연의 '6개월 뒤'를 암시하는 복선 나레이션 2~3문장
    (새 인물·새 물증이 살짝 등장해 다음 이야기를 궁금하게), (b) next_story = 다음에 올릴 새 사연 제목과 예고 1~2문장.
-7) 썸네일 문구와 업로드 카피.
+7) 썸네일 문구·업로드 카피. (호칭은 본문과 똑같은 표현으로 — '엄마'면 썸네일도 '엄마')
 
 JSON 만 출력:
 {{
@@ -361,6 +462,7 @@ hook.line 을 첫 대사로 쓰고, 그 상황 한복판에서 시작한다. 인
   종이 넘김, 찻잔, 한숨, 가쁜 숨, 심장박동, 핸드폰 진동, 병원 룸톤, 냄비 보글, 빗소리 등).
 - 반전이 터지는 장면 앞에는 (연출 메모를 쓰지 말고) 감정 태그를 twist 로 두어 음악이 스웰되게 한다.
 - 물증은 대사와 행동으로만 드러낸다. "그는 슬펐다" 같은 설명 대신 "숟가락을 놓았다" 같은 행동.
+- 호칭 통일: 이 편에서 정한 한 가지 표현만 쓴다('엄마'로 시작했으면 끝까지 '엄마', '어머니'를 섞지 않는다).
 - 감정 태그는 conflict/twist/heal 중에서 장면 흐름에 맞게.
 - image_prompt 는 영어, 인물 묘사를 설계의 desc_en 그대로 반복, no text.
 
@@ -382,6 +484,7 @@ def _short_design_prompt(settings: dict) -> str:
 - 사연 종류: {genre['label']} — {genre['hint']}
 - 주제: {topic}
 - 0초 콜드 오픈: 가장 충격적인 대사·사건 한복판에서 시작(인사·소개 금지). 첫 15초 안에 반전의 실마리.
+- 호칭 통일: 이 편에서 같은 사람은 한 표현으로만 부른다(제목·썸네일·대사 모두 '엄마'면 '엄마', '어머니'를 섞지 않는다).
 
 확정할 것: 생활 물증 1개(디테일까지), 압축 5비트(훅→되감기→갈등→반전→여운), 훅 대사, 되감기 자막,
 인물 2~3명, 썸네일 문구, 업로드 카피.
@@ -396,14 +499,19 @@ JSON 만 출력:
   "hook":{{"line":"0초 충격 대사","situation":"...","rewind_caption":"사흘 전, 그날"}},
   "chapters":[{{"index":1,"act":1,"title":"이야기","beat":"훅→되감기→갈등→반전→여운","pov":"..."}}],
   "sequel_teaser":"이번 사연 6개월 뒤 후속편 복선 한두 문장",
-  "next_story":{"title":"다음 사연 제목","teaser":"다음 사연 예고 한 문장"},
+  "next_story":{{"title":"다음 사연 제목","teaser":"다음 사연 예고 한 문장"}},
   "thumbnail":{{"style1":["8자 내외","10자 내외"],"style2":["대화 1","대화 2","반전 한 줄","유도 한 줄"]}},
   "upload":{{"title":"유튜브 제목","description":"설명","tags":["태그","6개"]}}}}"""
 
 
 def generate_script(settings: dict, cfg: dict,
-                    progress: Callable[[int, str], None] | None = None) -> dict:
-    """2단계(설계 → 집필)로 대본 생성. 실패하면 예외를 올린다(호출부에서 템플릿 폴백)."""
+                    progress: Optional[Callable[[int, str], None]] = None,
+                    engine_sink: Optional[dict] = None) -> dict:
+    """2단계(설계 → 집필)로 대본 생성. 실패하면 예외를 올린다(호출부에서 템플릿 폴백).
+
+    engine_sink 를 넘기면 실제로 대본을 만든 엔진("gemini"|"openai")과
+    사용한 엔진 목록이 {engine, engines} 로 담긴다 — 화면 태그가 이 값을 쓴다.
+    """
     target = float(settings.get("target_seconds") or 300)
     short = target <= 90
     fmt = FORMAT_PRESETS.get(settings.get("preset", "pilot5"), FORMAT_PRESETS["pilot5"])
@@ -411,11 +519,16 @@ def generate_script(settings: dict, cfg: dict,
     if not short and target >= 600:
         n_chapters = min(14, max(2, int(round(target / 180))))
     n_acts = 5 if not short else 2
+    used: list[str] = []
+
+    def _note(engine: str) -> None:
+        if engine not in used:
+            used.append(engine)
 
     if progress:
         progress(3, "1단계 · 생활 물증과 5막 반전 뼈대 설계 중…")
     design = _call(cfg, _short_design_prompt(settings) if short else _design_prompt(settings, n_acts, n_chapters),
-                   temperature=0.95)
+                   temperature=0.95, on_engine=_note)
     chapters = design.get("chapters") or [{"index": 1, "title": "이야기", "beat": "훅부터 여운까지", "act": 1}]
     if len(chapters) > n_chapters:
         chapters = chapters[:n_chapters]
@@ -434,10 +547,10 @@ def generate_script(settings: dict, cfg: dict,
             pct = 10 + int(78 * i / max(1, len(chapters)))
             progress(pct, f"2단계 · {i + 1}/{len(chapters)}장 집필 중 — {ch.get('title','')}")
         try:
-            part = _call(cfg, prompt, temperature=0.88)
+            part = _call(cfg, prompt, temperature=0.88, on_engine=_note)
         except Exception:
             time.sleep(2.0)
-            part = _call(cfg, prompt, temperature=0.8)
+            part = _call(cfg, prompt, temperature=0.8, on_engine=_note)
         part_scenes = part.get("scenes") or []
         for s in part_scenes:
             s["chapter"] = ch.get("index", i + 1)
@@ -452,7 +565,8 @@ def generate_script(settings: dict, cfg: dict,
         progress(92, "대본·물증 복선 점검 중…")
 
     result = {
-        "source": "gemini",
+        "source": used[0] if used else "gemini",
+        "engines_used": list(used),
         "title": design.get("title") or "세월의 사연",
         "logline": design.get("logline", ""),
         "titles": design.get("titles", []),
@@ -470,6 +584,9 @@ def generate_script(settings: dict, cfg: dict,
         "thumbnail": design.get("thumbnail", {}),
         "upload": design.get("upload", {}),
     }
+    if engine_sink is not None:
+        engine_sink["engine"] = result["source"]
+        engine_sink["engines"] = list(used)
     return result
 
 
@@ -612,7 +729,7 @@ def normalize_script(data: dict, settings: dict) -> dict:
                              "anchor": sc["id"]})
 
     hook_meta = data.get("hook") if isinstance(data.get("hook"), dict) else {}
-    return {
+    out = {
         "source": data.get("source", "gemini"),
         "title": title,
         "logline": str(data.get("logline", ""))[:200],
@@ -637,6 +754,8 @@ def normalize_script(data: dict, settings: dict) -> dict:
         "thumbnail": {"style1": style1[:2], "style2": style2[:5]},
         "upload": data.get("upload") or {},
     }
+    # 호칭 통일 — 주제 → 제목 순서로 표준 표현을 정해 대사·썸네일 문구까지 하나로 맞춘다
+    return harmonize_script(out, settings.get("topic", ""))
 
 
 GREETING_RE = re.compile(r"(안녕하세요|반갑습니다|세월의 사연극장입니다|오늘의 사연은|어서 오세요)")

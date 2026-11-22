@@ -9,6 +9,7 @@ Gemini 없이도 '대본 → 이미지 요청서 → 영상' 전체 흐름을 �
 """
 from __future__ import annotations
 
+from .honorifics import harmonize_script
 from .settings import GENRES
 
 # 화자(예시 대본의 자유 이름)별 인물 정보 — 나이·성별·성격·처지.
@@ -555,7 +556,7 @@ def build_template_script(settings: dict) -> dict:
         titles.insert(0, title)
     desc = " · ".join(dict.fromkeys([b[5] for b in expanded[:4]]))
     desc = f"{title}\n\n{desc}\n\n사연은 창작·각색된 이야기입니다."
-    return {
+    script = {
         "source": "template",
         "title": title,
         "titles": titles[:3],
@@ -584,6 +585,8 @@ def build_template_script(settings: dict) -> dict:
             "tags": ["사연", "라디오드라마", "감동사연", "세월의사연극장", "이야기"],
         },
     }
+    # 예시 대본도 호칭을 하나로 — 주제에 '엄마'라고 썼으면 본문·제목·썸네일도 '엄마'
+    return harmonize_script(script, topic)
 
 
 def _first_sentence(text: str) -> str:

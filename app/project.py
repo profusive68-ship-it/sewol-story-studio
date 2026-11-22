@@ -7,10 +7,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .gemini_script import generate_script, normalize_script
+from .gemini_script import (ENGINE_LABELS, SPEAKERS, SFX_VOCAB, candidate_engines, engine_tag,
+                            generate_script, no_engine_message, normalize_script)
 from .paths import project_dir
 from .script_templates import build_template_script
-from .settings import (FORMAT_PRESETS, GENRES, SUBTITLE_SIZES, load_config)
+from .settings import (FORMAT_PRESETS, GENRES, SPEAKER_LABELS, SUBTITLE_SIZES, load_config)
 
 SCHEMA = "sewol-project/1"
 CHARS_PER_SEC = 4.3
@@ -150,18 +151,32 @@ def create_project(payload: dict, progress=None) -> dict:
 
     warnings: list[str] = []
     script = None
+    engine_used = ""
     if progress:
         progress(2, "대본 준비 중…")
-    if (cfg.get("gemini_api_key") or "").strip():
+    engines = candidate_engines(cfg)
+    sink: dict = {}
+    if engines:
         try:
-            script = normalize_script(generate_script(settings, cfg, progress), settings)
+            script = normalize_script(
+                generate_script(settings, cfg, progress, engine_sink=sink), settings)
+            engine_used = str(sink.get("engine") or script.get("source") or engines[0])
+            script["source"] = engine_used
+            if len(sink.get("engines") or []) > 1:
+                warnings.append("Gemini 대본 호출이 실패(503·한도 초과 등)해 "
+                                "OpenAI 자동 보조(gpt-4o-mini)가 이어서 만들었습니다.")
         except Exception as e:
-            warnings.append(f"Gemini 대본 생성 실패 → 예시 대본으로 대체했습니다. ({str(e)[:120]})")
+            if len(engines) > 1:
+                warnings.append(f"Gemini·OpenAI 대본 생성이 모두 실패 → 예시 대본으로 대체했습니다. ({str(e)[:140]})")
+            else:
+                label = ENGINE_LABELS.get(engines[0], engines[0])
+                warnings.append(f"{label} 대본 생성 실패 → 예시 대본으로 대체했습니다. ({str(e)[:140]})")
     else:
-        warnings.append("Gemini API 키가 없어 예시 대본으로 만들었습니다. API 키를 저장하면 완전자동 대본이 나옵니다.")
+        warnings.append(no_engine_message(cfg) + " 예시 대본으로 만들었습니다.")
 
     if script is None:
         script = build_template_script(settings)
+        engine_used = "template"
 
     # 엔딩 떡밥 확정 (6개월 뒤 복선 / 다음 사연 예고 / 직접 입력)
     script["resolved_teaser"] = resolve_teaser(script, settings)
@@ -189,6 +204,11 @@ def create_project(payload: dict, progress=None) -> dict:
         },
         "options": settings,
         "source": script.get("source", "template"),
+        "script_engine": engine_used or script.get("source", "template"),
+        "script_engine_tag": engine_tag(engine_used or script.get("source", "template")),
+        "script_dirty": False,
+        "script_rev": 0,
+        "honorifics": script.get("honorifics") or {},
         "logline": script.get("logline", ""),
         "setting": script.get("setting", ""),
         "characters": script.get("characters", []),
@@ -217,7 +237,7 @@ def create_project(payload: dict, progress=None) -> dict:
         "timeline": [],
     }
     if project.get("source") == "template" and float(fmt["target"]) >= 600:
-        warnings.append("예시 대본은 실제 목표 길이보다 짧습니다. Gemini API 키를 저장하면 목표 길이에 맞춰 생성됩니다.")
+        warnings.append("예시 대본은 실제 목표 길이보다 짧습니다. Gemini 또는 OpenAI API 키를 저장하면 목표 길이에 맞춰 생성됩니다.")
         project["warnings"] = warnings
     _write(project)
     write_script_json(project, script)
@@ -353,6 +373,8 @@ def list_projects() -> list[dict]:
                 "image_count": len(d.get("image_plan", [])),
                 "outputs": d.get("outputs", {}),
                 "source": d.get("source"),
+                "script_engine": d.get("script_engine") or d.get("source"),
+                "script_dirty": bool(d.get("script_dirty")),
             })
         except Exception:
             continue
@@ -736,11 +758,254 @@ def write_script_json(project: dict, script: dict) -> Path:
         "next_story": script.get("next_story", {}),
         "thumbnail": script.get("thumbnail", {}),
         "upload": script.get("upload", {}),
+        "honorifics": script.get("honorifics") or project.get("honorifics") or {},
         "voice": __import__("app.tts", fromlist=["voice_report"]).voice_report(project),
     }
     path = pdir / "script.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+# ── 대본 전문 읽기 / 직접 수정 · 저장 ───────────────────────────────────
+FIXED_PLACEMENTS = ("after_hook", "teaser", "mid", "end")
+
+
+def _scene_seconds(sc: dict) -> float:
+    try:
+        start, end = sc.get("start"), sc.get("end")
+        if start is not None and end is not None and float(end) > float(start):
+            return float(end) - float(start)
+    except Exception:
+        pass
+    return est_seconds(str(sc.get("text") or ""))
+
+
+def _sec_label(sec: float) -> str:
+    sec = max(0, int(round(sec)))
+    return f"{sec // 60}분 {sec % 60}초" if sec >= 60 else f"{sec}초"
+
+
+def read_script_view(project: dict) -> dict:
+    """[📖 대본 전체 읽기] — 장별로 묶은 장면과 통째로 복사할 평문을 만든다."""
+    scenes = project.get("scenes") or []
+    chapters = project.get("chapters") or []
+    order: list[int] = []
+    for ch in chapters:
+        idx = int(ch.get("index") or 0)
+        if idx and idx not in order:
+            order.append(idx)
+    for sc in scenes:
+        idx = int(sc.get("chapter") or 1)
+        if idx not in order:
+            order.append(idx)
+    groups: list[dict] = []
+    for idx in order:
+        rows = [sc for sc in scenes if int(sc.get("chapter") or 1) == idx]
+        if not rows:
+            continue
+        title = next((str(c.get("title") or "") for c in chapters
+                      if int(c.get("index") or 0) == idx), "") or f"{idx}장"
+        groups.append({
+            "index": idx,
+            "title": title,
+            "seconds": round(sum(_scene_seconds(sc) for sc in rows), 1),
+            "scenes": [{
+                "id": sc.get("id"),
+                "speaker": sc.get("speaker", "narrator"),
+                "speaker_label": SPEAKER_LABELS.get(sc.get("speaker", "narrator"), sc.get("speaker", "")),
+                "text": sc.get("text", ""),
+                "emotion": sc.get("emotion", "heal"),
+                "placement": sc.get("placement", ""),
+                "tone": sc.get("speaker_tone", ""),
+                "age": sc.get("speaker_age", ""),
+                "gender": sc.get("speaker_gender", ""),
+                "sfx": sc.get("sfx", []),
+                "seconds": round(_scene_seconds(sc), 1),
+                "start": sc.get("start"),
+                "end": sc.get("end"),
+            } for sc in rows],
+        })
+    total = round(sum(_scene_seconds(sc) for sc in scenes), 1)
+    lines = [f"『{project.get('title', '')}』 대본 전문", "=" * 48, ""]
+    for g in groups:
+        lines.append(f"[{g['index']}장] {g['title']}  (약 {_sec_label(g['seconds'])})")
+        for sc in g["scenes"]:
+            tone = f" · {sc['tone']}" if sc["tone"] else ""
+            lines.append(f"  {sc['id']} {sc['speaker_label']}{tone}")
+            lines.append(f"      {sc['text']}")
+        lines.append("")
+    return {
+        "project_id": project.get("id"),
+        "title": project.get("title", ""),
+        "source": project.get("source", ""),
+        "script_engine": project.get("script_engine") or project.get("source", ""),
+        "script_engine_tag": engine_tag(project.get("script_engine") or project.get("source", "")),
+        "script_rev": int(project.get("script_rev") or 0),
+        "script_dirty": bool(project.get("script_dirty")),
+        "script_edited_at": project.get("script_edited_at", ""),
+        "total_scenes": len(scenes),
+        "total_seconds": total,
+        "chapters": groups,
+        "text": "\n".join(lines).rstrip() + "\n",
+    }
+
+
+def _script_doc(project: dict) -> dict:
+    """script.json 에 쓸 대본 원본 묶음 — project.json 의 현재 값을 그대로 옮긴다."""
+    return {
+        "title": project.get("title"),
+        "source": project.get("source"),
+        "setting": project.get("setting", ""),
+        "logline": project.get("logline", ""),
+        "characters": project.get("characters", []),
+        "evidence": project.get("evidence", []),
+        "acts": project.get("acts", []),
+        "hook": project.get("hook", {}),
+        "chapters": project.get("chapters", []),
+        "scenes": project.get("scenes", []),
+        "sequel_teaser": project.get("sequel_teaser", ""),
+        "next_story": project.get("next_story", {}),
+        "thumbnail": project.get("thumbnail", {}),
+        "upload": project.get("upload", {}),
+        "honorifics": project.get("honorifics") or {},
+    }
+
+
+def _remap_id(mapping: dict, old_id: str, old_ids: list[str]) -> str:
+    """삭제된 장면을 가리키던 자리(훅·장·이미지)는 앞쪽 살아남은 장면으로 잇는다."""
+    if not old_id:
+        return ""
+    if old_id in mapping:
+        return mapping[old_id]
+    try:
+        pos = old_ids.index(old_id)
+    except ValueError:
+        return ""
+    for prev in reversed(old_ids[:pos]):
+        if prev in mapping:
+            return mapping[prev]
+    for nxt in old_ids[pos + 1:]:
+        if nxt in mapping:
+            return mapping[nxt]
+    return ""
+
+
+def save_edited_script(project: dict, incoming, title=None) -> dict:
+    """화면에서 고친 대본을 project.json · script.json 에 저장한다.
+
+    장면의 화자·감정·대사·연기 지시·효과음만 바꾼다. 이미지 프롬프트·장 구성·
+    훅/예고/엔딩 같은 고정 장면(placement)은 그대로 두어 조립이 깨지지 않게 한다.
+    빈 대사를 저장하면 그 장면은 삭제로 본다(고정 장면은 원문 유지).
+    """
+    if not isinstance(incoming, list) or not incoming:
+        raise ValueError("수정할 장면 목록이 비어 있습니다.")
+    old = project.get("scenes") or []
+    if not old:
+        raise ValueError("이 사연에는 저장된 대본이 없습니다.")
+    old_ids = [str(sc.get("id") or "") for sc in old]
+    by_id = {str(sc.get("id") or ""): sc for sc in old if sc.get("id")}
+    merged: list[dict] = []
+    removed = 0
+    changed = 0
+    last_chapter = 1
+    for raw in incoming:
+        if not isinstance(raw, dict):
+            continue
+        sid = str(raw.get("id") or "").strip()
+        base = dict(by_id.get(sid) or {})
+        placement = str(base.get("placement") or "")
+        text = re.sub(r"\s+", " ", str(raw.get("text") or "")).strip()
+        if not text:
+            if placement in FIXED_PLACEMENTS:
+                text = str(base.get("text") or "").strip()
+            else:
+                removed += 1
+                continue
+        if len(text) > 600:
+            raise ValueError(f"{sid or '새'} 장면의 대사가 너무 깁니다(600자 넘음). 짧게 나눠 주세요.")
+        if not base and len(text) < 2:
+            continue
+        sc = base
+        if str(base.get("text") or "").strip() != text:
+            changed += 1
+        sc["text"] = text
+        speaker = str(raw.get("speaker") or sc.get("speaker") or "narrator").strip()
+        sc["speaker"] = speaker if speaker in SPEAKERS else "narrator"
+        emotion = str(raw.get("emotion") or sc.get("emotion") or "heal").strip()
+        sc["emotion"] = emotion if emotion in ("conflict", "twist", "heal") else "heal"
+        if "speaker_tone" in raw:
+            sc["speaker_tone"] = re.sub(r"\s+", " ", str(raw.get("speaker_tone") or "")).strip()[:120]
+        if isinstance(raw.get("sfx"), list):
+            sc["sfx"] = [str(x).strip() for x in raw["sfx"] if str(x).strip() in SFX_VOCAB][:2]
+        if not base:
+            sc.setdefault("sfx", [])
+            sc.setdefault("emotion", "heal")
+            sc.setdefault("speaker_age", "")
+            sc.setdefault("speaker_gender", "")
+            sc.setdefault("speaker_tone", "")
+            sc["image_caption"] = sc.get("image_caption") or text[:26]
+            sc["image_prompt"] = sc.get("image_prompt") or ""
+            sc["chapter"] = last_chapter
+            sc["chapter_title"] = sc.get("chapter_title") or ""
+            sc["_new"] = True
+        sc["_old_id"] = sid
+        last_chapter = int(sc.get("chapter") or last_chapter)
+        merged.append(sc)
+    if not merged:
+        raise ValueError("남는 장면이 없습니다. 대본 전체를 지울 수는 없습니다.")
+
+    # 장면 번호 다시 매기기 (s01, s02 …) + 예전 id → 새 id 대응
+    mapping: dict[str, str] = {}
+    for i, sc in enumerate(merged, start=1):
+        old_id = str(sc.pop("_old_id", "") or "")
+        sc.pop("_new", None)
+        if old_id:
+            mapping[old_id] = f"s{i:02d}"
+        sc["id"] = f"s{i:02d}"
+
+    hook = dict(project.get("hook") or {})
+    old_hook = [str(x) for x in (hook.get("scene_ids") or [])]
+    new_hook = [mapping[h] for h in old_hook if h in mapping]
+    if not new_hook:
+        new_hook = [merged[0]["id"]] if hook.get("enabled", True) else []
+    hook["scene_ids"] = new_hook
+    project["hook"] = hook
+
+    for ch in project.get("chapters") or []:
+        fixed = _remap_id(mapping, str(ch.get("anchor") or ""), old_ids)
+        if fixed:
+            ch["anchor"] = fixed
+    for img in project.get("image_plan") or []:
+        fixed = _remap_id(mapping, str(img.get("anchor") or ""), old_ids)
+        if fixed:
+            img["anchor"] = fixed
+            scene = next((s for s in merged if s["id"] == fixed), None)
+            if scene:
+                img["line"] = scene.get("text", img.get("line", ""))
+
+    project["scenes"] = merged
+    if title is not None and str(title).strip():
+        project["title"] = str(title).strip()[:40]
+    project["script_rev"] = int(project.get("script_rev") or 0) + 1
+    project["script_edited_at"] = now()
+    project["script_dirty"] = True
+    project["script_edited_scenes"] = changed
+    project["script_removed_scenes"] = removed
+    status = dict(project.get("status") or {})
+    status.update({"stage": "script_edited",
+                   "message": "대본을 수정해 저장했습니다 — [🎬 수정한 대본으로 성우·영상 다시 만들기]를 누르면 영상에 반영됩니다.",
+                   "updated": now()})
+    project["status"] = status
+    save(project)
+    write_script_json(project, _script_doc(project))
+    write_image_request(project)
+    write_upload_copy(project)
+    return {"ok": True, "scenes": len(merged), "changed": changed, "removed": removed,
+            "script_rev": project["script_rev"], "script_dirty": True,
+            "script_engine_tag": engine_tag(project.get("script_engine") or project.get("source", "")),
+            "title": project.get("title", ""),
+            "message": (f"대본을 저장했습니다. (장면 {len(merged)}개 · 수정 {changed}곳"
+                        + (f" · 삭제 {removed}개" if removed else "") + ")")}
 
 
 def write_license_cc0(pid: str) -> Path:

@@ -11,6 +11,9 @@ DEFAULT_GITHUB_REPO = "profusive68-ship-it/sewol-story-studio"
 
 DEFAULT_CONFIG = {
     "gemini_api_key": "",
+    # 대본 엔진: auto(Gemini 먼저 → 실패하면 OpenAI) | gemini | openai
+    "script_engine": "auto",
+    "openai_script_model": "gpt-4o-mini",
     # 음성 엔진: edge(무료·기본) | openai(감성 TTS·유료)
     "tts_engine": "edge",
     "openai_api_key": "",
@@ -98,6 +101,21 @@ GENRES = {
 TTS_ENGINES = {
     "openai": "OpenAI 감성 TTS (추천 · 유료)",
     "edge": "무료 edge-tts (기본 · 0원)",
+}
+
+# ── 대본 엔진 ─────────────────────────────────────────────────────────────
+# Gemini(무료)로 먼저 만들고, 503·429·한도 초과로 실패하면 같은 프롬프트를
+# OpenAI Chat Completions(gpt-4o-mini)로 이어서 보내 같은 JSON 스키마의 대본을 받는다.
+SCRIPT_ENGINES = {
+    "auto": "자동 — Gemini (무료) 먼저, 실패하면 OpenAI 자동 보조",
+    "gemini": "Gemini 단독 (무료)",
+    "openai": "OpenAI 단독 (gpt-4o-mini)",
+}
+
+OPENAI_SCRIPT_MODELS = {
+    "gpt-4o-mini": "gpt-4o-mini (기본 · 빠르고 저렴)",
+    "gpt-4.1-mini": "gpt-4.1-mini (최신 소형 · 추천)",
+    "gpt-4o": "gpt-4o (더 좋은 문장 · 비쌈)",
 }
 
 OPENAI_TTS_MODELS = {
@@ -209,6 +227,10 @@ def load_config() -> dict:
         cfg["openai_api_key"] = env_openai
     engine = str(cfg.get("tts_engine") or "edge").strip().lower()
     cfg["tts_engine"] = engine if engine in TTS_ENGINES else "edge"
+    sengine = str(cfg.get("script_engine") or "auto").strip().lower()
+    cfg["script_engine"] = sengine if sengine in SCRIPT_ENGINES else "auto"
+    smodel = str(cfg.get("openai_script_model") or "gpt-4o-mini").strip()
+    cfg["openai_script_model"] = smodel or "gpt-4o-mini"
     model = str(cfg.get("openai_tts_model") or "gpt-4o-mini-tts").strip()
     cfg["openai_tts_model"] = model if model in OPENAI_TTS_MODELS else "gpt-4o-mini-tts"
     return cfg
@@ -246,6 +268,11 @@ def public_config() -> dict:
     return {
         "has_key": bool(key),
         "key_masked": mask_secret(key),
+        "script_engine": cfg.get("script_engine", "auto"),
+        "script_engines": SCRIPT_ENGINES,
+        "openai_script_model": cfg.get("openai_script_model", "gpt-4o-mini"),
+        "openai_script_models": OPENAI_SCRIPT_MODELS,
+        "has_script_engine": bool((key or "").strip() or (okey or "").strip()),
         "tts_engine": cfg.get("tts_engine", "edge"),
         "openai_tts_model": cfg.get("openai_tts_model", "gpt-4o-mini-tts"),
         "has_openai_key": bool(okey),

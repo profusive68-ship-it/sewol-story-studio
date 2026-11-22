@@ -16,6 +16,8 @@ let DETAIL_SIG = "";
 let GALLERY_ROWS = [];
 let RESTART_WAIT = false;
 let LB_IDX = 0;
+let SCRIPT_MODE = "";      // "" | "read" | "edit"  (상세 화면을 다시 그려도 보던 대본 화면을 이어서 연다)
+let SCRIPT_DIRTY = false;   // 저장하지 않은 대본 수정이 있으면 자동 새로고침이 화면을 덮지 않는다
 
 const STORE = "sewol.studio.settings.v1";
 const DEFAULTS = {
@@ -199,6 +201,7 @@ async function loadMeta() {
   }
   if (conf.has_key && conf.key_masked) $("#apiMsg").textContent = `저장된 키: ${conf.key_masked} · 모델 ${conf.text_model}`;
   applyTtsConfig(conf);
+  applyScriptConfig(conf);
   if (conf.youtube_privacy !== undefined) {
     const p = conf.youtube_privacy || "private";
     $("#ytPrivacy").value = p === "private" && conf.youtube_publish_at ? "scheduled" : p;
@@ -235,6 +238,7 @@ async function saveKey() {
     $("#apiBadge").textContent = "키 저장됨";
     $("#apiBadge").className = "badge on";
     $("#apiMsg").textContent = `저장 완료 (${conf.key_masked}) · 이 맥북 안에만 보관됩니다.`;
+    applyScriptConfig(conf);
     toast("API 키를 저장했습니다.");
   } catch (e) { toast(e.message, true); }
 }
@@ -289,6 +293,7 @@ async function saveTts(silent = false) {
     });
     $("#openaiKey").value = "";
     applyTtsConfig(conf);
+    applyScriptConfig(conf);
     if (silent) return;
     if (conf.tts_engine === "openai" && !conf.has_openai_key) {
       toast("저장했습니다. OpenAI API 키를 넣어야 감성 TTS 로 제작됩니다.", true);
@@ -299,6 +304,60 @@ async function saveTts(silent = false) {
     }
   } catch (e) { toast(e.message, true); }
 }
+
+// ── 대본 엔진 (Gemini 무료 / OpenAI 자동 보조) ───────────────────────────
+const SCRIPT_ENGINE_LABEL = { auto: "자동", gemini: "Gemini 단독", openai: "OpenAI 단독" };
+
+function applyScriptConfig(conf) {
+  conf = conf || {};
+  const mode = ["auto", "gemini", "openai"].includes(conf.script_engine) ? conf.script_engine : "auto";
+  if ($("#scriptEngine")) $("#scriptEngine").value = mode;
+  const hasG = !!conf.has_key;
+  const hasO = !!conf.has_openai_key;
+  const badge = $("#scriptEngineBadge");
+  if (badge) {
+    const keys = hasG && hasO ? "키 2개" : (hasG || hasO ? "키 1개" : "키 없음");
+    badge.textContent = `${SCRIPT_ENGINE_LABEL[mode]} · ${keys}`;
+    badge.className = "badge " + (hasG || hasO ? "on" : "");
+  }
+  const state = $("#scriptEngineState");
+  if (state) {
+    const parts = [];
+    if (mode === "auto") {
+      parts.push(hasG ? "Gemini 로 먼저 만들고, 실패하면 OpenAI 로 이어서" :
+        (hasO ? "Gemini 키가 없어 OpenAI 로 만듭니다" : "Gemini·OpenAI 키가 모두 없어 예시 대본으로 만듭니다"));
+    } else if (mode === "gemini") {
+      parts.push(hasG ? "Gemini 단독" : "Gemini 키가 없어 예시 대본으로 만듭니다");
+    } else {
+      parts.push(hasO ? `OpenAI ${conf.openai_script_model || "gpt-4o-mini"} 단독` : "OpenAI 키가 없어 예시 대본으로 만듭니다");
+    }
+    if (mode === "auto" && hasO) parts.push(`보조: OpenAI ${conf.openai_script_model || "gpt-4o-mini"}`);
+    state.textContent = parts.join(" · ");
+  }
+}
+
+async function saveScriptEngine() {
+  try {
+    const conf = await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ script_engine: $("#scriptEngine").value }),
+    });
+    applyScriptConfig(conf);
+    toast(`대본 엔진: ${SCRIPT_ENGINE_LABEL[conf.script_engine] || conf.script_engine} 로 저장했습니다.`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function scriptTag(p) {
+  const src = String(p?.script_engine || p?.source || "").toLowerCase();
+  if (src === "openai") return "AI 대본 (OpenAI)";
+  if (src === "gemini") return "AI 대본 (Gemini)";
+  if (src === "template") return "예시 대본";
+  return p?.script_engine_tag || "대본";
+}
+
+const SPEAKER_LABEL = { narrator: "해설", old_male: "노인", old_female: "할머니", female: "여성", young_male: "청년", child: "아이" };
+const EMOTION_LABEL = { conflict: "갈등", twist: "반전", heal: "치유" };
+const PLACEMENT_LABEL = { after_hook: "되감기 카드", teaser: "후속편 예고", mid: "좋아요 멘트", end: "구독·지역 인사" };
 
 async function testTts() {
   const btn = $("#btnTtsTest");
@@ -505,6 +564,7 @@ function detailSignature(p) {
     p?.id, p?.title, p?.status?.stage, p?.status?.percent, p?.status?.message,
     p?.outputs || {}, (p?.image_files || []).length, (p?.missing_images || []).length,
     (p?.warnings || []).length, (p?.receive_log || []).length, p?.duration,
+    p?.script_rev, p?.script_dirty, p?.script_edited_at, p?.script_engine,
   ]);
 }
 
@@ -513,6 +573,7 @@ async function refreshDetailIfChanged(pid) {
     const active = document.activeElement;
     if (active && active.closest && active.closest("#detailPanel") &&
         ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;   // 입력 중에는 다시 그리지 않는다
+    if (SCRIPT_DIRTY) return;            // 저장하지 않은 대본 수정이 있으면 화면을 덮지 않는다
     const p = await api(`/api/projects/${pid}`);
     const sig = detailSignature(p);
     if (sig === DETAIL_SIG && document.querySelector("#imgGallery")) return;
@@ -531,14 +592,14 @@ function renderDetail(p) {
   GALLERY_SIG = "";      // 새로 그릴 때는 갤러리도 한 번 다시 불러온다
   const keepRevise = ($("#imgReviseNote") || {}).value || "";   // 쓰던 수정 지시는 보존
   const done = p.status?.stage === "done";
+  const edited = p.status?.stage === "script_edited";
   const pct = p.status?.percent || 0;
   const planFiles = p.image_plan || [];
   const have = new Set(p.image_files || []);
-
-  const scenes = (p.scenes || []).slice(0, 60).map((s) => {
-    const sp = { narrator: "해설", old_male: "노인", old_female: "할머니", female: "여성", young_male: "청년", child: "아이" }[s.speaker] || s.speaker;
-    return `<p><span class="sp">${esc(sp)}</span>${esc(s.text)}</p>`;
-  }).join("");
+  const scriptScenes = p.scenes || [];
+  const scriptSeconds = scriptScenes.reduce((a, s) => a + Math.max(1.2, String(s.text || "").length / 4.3), 0);
+  const scriptSummary = `장면 ${scriptScenes.length}개 · 약 ${mmss(scriptSeconds)} · ${scriptTag(p)}`
+    + (p.script_dirty ? " · 수정본 저장됨(영상은 아직 예전 대본)" : "");
 
   const links = [];
   if (p.outputs?.video) links.push(`<a href="${fileUrl(p.id, "video")}" target="_blank">영상 보기 <span>영상 파일</span></a>`);
@@ -577,11 +638,11 @@ function renderDetail(p) {
   panel.innerHTML = `
     <div class="card-head">
       <h2 class="detail-title">${esc(p.title)}</h2>
-      <span class="badge ${done ? "on" : ""}">${done ? "완성" : `${pct}%`}</span>
+      <span class="badge ${done ? "on" : ""}">${done ? "완성" : (edited ? "대본 수정됨" : `${pct}%`)}</span>
     </div>
     <div class="detail-meta">${esc(p.genre_label || "")} · ${esc(p.format?.label || "")} · ${esc(p.aspect || p.format?.aspect || "")}</div>
     <div class="tagrow">
-      <span class="tag">${p.source === "gemini" ? "AI 대본" : "예시 대본"}</span>
+      <span class="tag">${esc(scriptTag(p))}</span>
       <span class="tag">이미지 ${planFiles.length}장</span>
       <span class="tag">${esc(p.options?.voice_mode === "multi" ? "다중 성우" : p.options?.voice_mode === "female" ? "여성 낭독" : "남성 낭독")}</span>
       <span class="tag">${esc(p.options?.subtitle_size === "basic" ? "자막 70px" : "자막 92px")}</span>
@@ -589,7 +650,7 @@ function renderDetail(p) {
     </div>
     ${warnings}
     ${recvBox}
-    ${done ? `<video controls preload="metadata" src="${fileUrl(p.id, "video")}" style="width:100%;border-radius:14px;background:#000;margin-bottom:12px"></video>` : ""}
+    ${p.outputs?.video ? `<video controls preload="metadata" src="${fileUrl(p.id, "video")}" style="width:100%;border-radius:14px;background:#000;margin-bottom:12px"></video>` : ""}
     ${planFiles.length ? `<div class="requestbox">
       <div class="row">
         <button class="btn primary small" id="btnGhRequest">📤 케빈에게 이미지 요청하기</button>
@@ -643,8 +704,19 @@ function renderDetail(p) {
       ${[0, 1, 2, 3, 4].map((i) => `<input id="th2${i}" value="${esc(p.thumbnail?.style2?.[i] || "")}" placeholder="대문짝 ${i + 1}번째 줄">`).join("")}
       <button class="btn small" id="btnThumb">썸네일 다시 만들기</button>
     </div>
-    <label class="label">대본 미리보기</label>
-    <div class="script">${scenes || '<p class="hint">대본이 없습니다.</p>'}</div>
+    <div class="scriptbox" id="scriptBox">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <label class="label" style="margin:0">📖 대본 전체 읽기 / ✏️ 수정하기</label>
+        <div class="row" style="gap:6px">
+          <button class="btn ghost small" id="btnScriptRead">📖 대본 전체 읽기</button>
+          <button class="btn small" id="btnScriptEdit">✏️ 수정하기</button>
+        </div>
+      </div>
+      <p class="hint small" id="scriptSummary">${esc(scriptSummary)}</p>
+      <div class="script" id="scriptView" hidden></div>
+      <div id="scriptEditor" hidden></div>
+      <div id="scriptSaveResult"></div>
+    </div>
   `;
 
   $$("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText(b.dataset.copy)));
@@ -680,6 +752,10 @@ function renderDetail(p) {
     uploadImages(p.id, e.dataTransfer.files);
   });
   $("#btnThumb")?.addEventListener("click", () => regenThumb(p.id));
+  $("#btnScriptRead")?.addEventListener("click", () => openScriptRead(p.id));
+  $("#btnScriptEdit")?.addEventListener("click", () => openScriptEditor(p.id));
+  if (SCRIPT_MODE === "read") openScriptRead(p.id);
+  else if (SCRIPT_MODE === "edit") openScriptEditor(p.id);
   if (keepRevise && $("#imgReviseNote")) $("#imgReviseNote").value = keepRevise;
   loadGallery(p.id);
   loadKevinTimeline(p.id);
@@ -1410,6 +1486,175 @@ async function regenThumb(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+// ── 대본 전체 읽기 · 직접 수정 · 재제작 ─────────────────────────────────
+function growTextarea(el) {
+  if (!el || el.tagName !== "TEXTAREA") return;
+  el.style.height = "auto";
+  el.style.height = Math.min(320, el.scrollHeight + 4) + "px";
+}
+
+async function openScriptRead(pid) {
+  const box = $("#scriptView");
+  const editor = $("#scriptEditor");
+  if (!box) return;
+  SCRIPT_MODE = "read";
+  if (editor) editor.hidden = true;
+  box.hidden = false;
+  box.innerHTML = `<p class="hint small">대본 불러오는 중…</p>`;
+  let d = null;
+  try { d = await api(`/api/projects/${pid}/script`); }
+  catch (e) { box.innerHTML = `<div class="warn">${esc(e.message)}</div>`; return; }
+  const chapters = d.chapters || [];
+  if (!chapters.length) { box.innerHTML = `<p class="hint">대본이 없습니다.</p>`; return; }
+  box.dataset.text = d.text || "";
+  const head = `<div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <span class="hint small">${esc(d.title || "")} · 장면 ${d.total_scenes}개 · 약 ${mmss(d.total_seconds)} · ${esc(d.script_engine_tag || "")}${d.script_dirty ? " · 수정본 저장됨" : ""}</span>
+      <div class="row" style="gap:6px">
+        <button class="btn ghost small" id="btnScriptCopyAll">📋 전체 복사</button>
+        <button class="btn ghost small" id="btnScriptCopyLines">대사만 복사</button>
+        <button class="btn ghost small" id="btnScriptClose">접기</button>
+      </div>
+    </div>`;
+  const body = chapters.map((g) => `
+    <div class="chapter-head">${g.index}장 · ${esc(g.title)} <span>약 ${mmss(g.seconds)}</span></div>
+    ${(g.scenes || []).map((s) => `
+      <div class="sline${s.placement ? " fixed" : ""}" data-sid="${esc(s.id)}">
+        <div class="sline-head"><b>${esc(s.id)}</b> <span class="sp">${esc(s.speaker_label || "")}</span>
+          ${s.placement ? `<span class="tag">${esc(PLACEMENT_LABEL[s.placement] || s.placement)}</span>` : ""}
+          <span class="hint small">${esc(EMOTION_LABEL[s.emotion] || "")}${s.sfx && s.sfx.length ? " · 🔊 " + esc(s.sfx.join(", ")) : ""}</span>
+        </div>
+        <p>${esc(s.text)}</p>
+        ${s.tone ? `<div class="hint small">연기: ${esc(s.tone)}${s.age ? " · " + esc(s.age) : ""}</div>` : ""}
+      </div>`).join("")}`).join("");
+  box.innerHTML = head + body;
+  $("#btnScriptCopyAll")?.addEventListener("click", () => copyText(d.text || ""));
+  $("#btnScriptCopyLines")?.addEventListener("click", () => {
+    const lines = chapters.flatMap((g) => (g.scenes || []).map((s) => s.text)).join("\n");
+    copyText(lines);
+  });
+  $("#btnScriptClose")?.addEventListener("click", () => { box.hidden = true; SCRIPT_MODE = ""; });
+}
+
+async function openScriptEditor(pid) {
+  const box = $("#scriptEditor");
+  const view = $("#scriptView");
+  if (!box) return;
+  SCRIPT_MODE = "edit";
+  if (view) view.hidden = true;
+  box.hidden = false;
+  let p = CURRENT && CURRENT.id === pid ? CURRENT : await api(`/api/projects/${pid}`);
+  const scenes = p.scenes || [];
+  if (!scenes.length) { box.innerHTML = `<p class="hint">대본이 없습니다.</p>`; return; }
+  const chapters = p.chapters || [];
+  const opts = (map, cur) => Object.entries(map)
+    .map(([k, v]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(v)}</option>`).join("");
+  let html = `<p class="hint small">장면의 대사·화자를 고치고 [💾 수정된 대본 저장]을 누르세요.
+    빈 대사로 저장한 장면은 대본에서 빠집니다(훅·되감기·예고·엔딩 같은 고정 장면 제외).</p><div class="sedit-list">`;
+  let chapter = null;
+  scenes.forEach((s, i) => {
+    const ch = Number(s.chapter || 1);
+    if (ch !== chapter) {
+      chapter = ch;
+      const title = (chapters.find((c) => Number(c.index) === ch) || {}).title || s.chapter_title || `${ch}장`;
+      html += `<div class="chapter-head">${ch}장 · ${esc(title)}</div>`;
+    }
+    const fixed = !!s.placement;
+    html += `<div class="sedit" data-idx="${i}" data-id="${esc(s.id)}">
+      <div class="sedit-head">
+        <b>${esc(s.id)}</b>
+        <select data-role="speaker">${opts(SPEAKER_LABEL, s.speaker || "narrator")}</select>
+        <select data-role="emotion">${opts(EMOTION_LABEL, s.emotion || "heal")}</select>
+        ${fixed ? `<span class="tag">${esc(PLACEMENT_LABEL[s.placement] || s.placement)}</span>`
+                : `<button class="btn ghost small" data-del="1" title="이 장면 빼기">✕</button>`}
+      </div>
+      <textarea data-role="text" rows="2">${esc(s.text)}</textarea>
+      ${(s.speaker_tone || (s.sfx && s.sfx.length))
+        ? `<div class="hint small">${s.speaker_tone ? "연기: " + esc(s.speaker_tone) : ""}${s.sfx && s.sfx.length ? " · 🔊 " + esc(s.sfx.join(", ")) : ""}</div>`
+        : ""}
+    </div>`;
+  });
+  html += `</div>
+    <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+      <button class="btn primary small" id="btnScriptSave">💾 수정된 대본 저장</button>
+      <button class="btn small" id="btnScriptRebuild">🎬 수정한 대본으로 성우·영상 다시 만들기</button>
+      <button class="btn ghost small" id="btnScriptCancel">↩︎ 수정 취소</button>
+      <span class="hint small" id="scriptDirtyMsg"></span>
+    </div>`;
+  box.innerHTML = html;
+  SCRIPT_DIRTY = false;
+  const mark = () => {
+    SCRIPT_DIRTY = true;
+    const m = $("#scriptDirtyMsg");
+    if (m) m.textContent = "저장하지 않은 수정이 있습니다";
+  };
+  box.querySelectorAll("[data-role=text], [data-role=speaker], [data-role=emotion]").forEach((el) => {
+    el.addEventListener("input", () => { mark(); growTextarea(el); });
+    el.addEventListener("change", mark);
+  });
+  box.querySelectorAll("textarea").forEach(growTextarea);
+  box.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
+    b.closest(".sedit")?.remove();
+    mark();
+    toast("장면을 뺐습니다. [💾 수정된 대본 저장]을 눌러야 반영됩니다.");
+  }));
+  $("#btnScriptSave")?.addEventListener("click", () => saveScript(pid));
+  $("#btnScriptRebuild")?.addEventListener("click", () => rebuildScript(pid));
+  $("#btnScriptCancel")?.addEventListener("click", () => {
+    SCRIPT_MODE = ""; SCRIPT_DIRTY = false;
+    box.hidden = true;
+    toast("대본 수정을 취소했습니다.");
+  });
+}
+
+function collectScriptScenes() {
+  return $$("#scriptEditor .sedit").map((row) => ({
+    id: row.dataset.id || "",
+    speaker: row.querySelector("[data-role=speaker]")?.value || "narrator",
+    emotion: row.querySelector("[data-role=emotion]")?.value || "heal",
+    text: row.querySelector("[data-role=text]")?.value ?? "",
+  }));
+}
+
+async function saveScript(pid, quiet = false) {
+  const btn = $("#btnScriptSave");
+  const scenes = collectScriptScenes();
+  if (!scenes.length) return toast("저장할 장면이 없습니다.", true);
+  if (btn) { btn.disabled = true; btn.textContent = "저장 중…"; }
+  try {
+    const r = await api(`/api/projects/${pid}/script`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenes }),
+    });
+    SCRIPT_DIRTY = false;
+    if (!quiet) toast(r.message || "대본을 저장했습니다.");
+    await openProject(pid);          // 저장값(장면 수·대본 차수)을 화면에 반영
+    const box = $("#scriptSaveResult");
+    if (box) box.innerHTML = `<div class="revise-result"><b>💾 대본 저장됨</b>
+      <div>${esc(r.message || "")}</div>
+      <div class="hint small">[🎬 수정한 대본으로 성우·영상 다시 만들기]를 누르면 영상에 반영됩니다.</div></div>`;
+    return r;
+  } catch (e) {
+    toast(e.message, true);
+    return null;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "💾 수정된 대본 저장"; }
+  }
+}
+
+async function rebuildScript(pid) {
+  if (SCRIPT_DIRTY) {
+    const saved = await saveScript(pid, true);   // 누르기 전 고친 내용을 먼저 저장하고 그 대본으로 만든다
+    if (!saved) return;
+  }
+  try {
+    const { job } = await api(`/api/projects/${pid}/script/rebuild`, { method: "POST" });
+    SCRIPT_MODE = "";
+    $("#detailPanel").hidden = true;
+    watchJob(job, { onDone: async () => { await loadProjects(); await openProject(pid); } });
+    toast("수정한 대본으로 성우부터 다시 만들고 있습니다. 고친 장면만 새로 녹음합니다.");
+  } catch (e) { toast(e.message, true); }
+}
+
 // ── 주말 합본 ────────────────────────────────────────────────────────────
 async function loadWeekendOptions() {
   const list = await api("/api/projects");
@@ -1442,6 +1687,8 @@ function showCompileResult(r) {
 
 function bind() {
   $("#btnSaveKey").addEventListener("click", saveKey);
+  $("#btnScriptEngine")?.addEventListener("click", saveScriptEngine);
+  $("#scriptEngine")?.addEventListener("change", saveScriptEngine);
   $("#btnTtsSave").addEventListener("click", () => saveTts());
   $("#btnTtsTest").addEventListener("click", testTts);
   ["ttsEngine", "openaiModel", "ttsFallback"].forEach((id) => {

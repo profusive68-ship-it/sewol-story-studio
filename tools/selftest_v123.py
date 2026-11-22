@@ -53,9 +53,9 @@ def main() -> int:
     from app import __version__ as pkg_version
     disk = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     check("VERSION == app.__version__", disk == pkg_version, f"{disk} / {pkg_version}")
-    check("버전이 1.2.3", disk == "1.2.3", disk)
+    check("버전이 1.2.3 이상", tuple(int(x) for x in disk.split(".") if x.isdigit()) >= (1, 2, 3), disk)
     readme = (ROOT / "README_맥북설치방법.txt").read_text(encoding="utf-8")
-    check("설명서 머리말도 v1.2.3", "(v1.2.3)" in readme, readme.splitlines()[1])
+    check("설명서 머리말 버전 일치", f"(v{disk})" in readme, readme.splitlines()[1])
 
     print("== 2. Python 3.9 문법 호환 ==")
     bad = []
